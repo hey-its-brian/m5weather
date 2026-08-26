@@ -1,0 +1,193 @@
+#include "portal.h"
+
+#include <ArduinoJson.h>
+#include <DNSServer.h>
+#include <WebServer.h>
+#include <WiFi.h>
+#include <M5Unified.h>
+#include <time.h>
+
+#include "config.h"
+#include "themes.h"
+#include "weather.h"
+#include "webui.h"
+
+// Set by handlers, consumed by the main loop (rendering the e-ink display
+// takes seconds, so it must not happen inside an HTTP handler).
+extern volatile bool g_renderRequested;
+extern volatile bool g_rebootRequested;
+
+static WebServer server(80);
+static DNSServer dns;
+static bool captiveMode = false;
+
+static void sendJson(int status, const JsonDocument &doc) {
+  String out;
+  serializeJson(doc, out);
+  server.send(status, "application/json", out);
+}
+
+static void sendError(int status, const String &message) {
+  JsonDocument doc;
+  doc["error"] = message;
+  sendJson(status, doc);
+}
+
+static void handleRoot() {
+  server.send_P(200, "text/html", WEBUI_HTML);
+}
+
+static void handleGetConfig() {
+  JsonDocument doc;
+  doc["zip"] = config.zip;
+  doc["units"] = config.units;
+  doc["refresh_minutes"] = config.refreshMinutes;
+  doc["theme"] = config.theme;
+  doc["wifi_ssid"] = config.wifiSsid;
+
+  JsonArray themes = doc["themes"].to<JsonArray>();
+  size_t count;
+  const Theme *list = themeList(count);
+  for (size_t i = 0; i < count; i++) {
+    JsonObject t = themes.add<JsonObject>();
+    t["id"] = list[i].id;
+    t["label"] = list[i].label;
+  }
+  sendJson(200, doc);
+}
+
+static void handlePostConfig() {
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    sendError(400, "Invalid JSON");
+    return;
+  }
+
+  String zip = doc["zip"] | "";
+  if (zip.length() != 5) {
+    sendError(400, "Zip code must be 5 digits");
+    return;
+  }
+
+  // Resolve the zip before committing, so a typo doesn't wipe a working
+  // location. Requires internet, which captive-portal mode doesn't have.
+  if (zip != config.zip || !config.hasLocation()) {
+    if (WiFi.status() != WL_CONNECTED) {
+      sendError(503, "Not connected to Wi-Fi yet; set Wi-Fi first");
+      return;
+    }
+    String err;
+    if (!geocodeZip(zip, err)) {
+      sendError(422, err);
+      return;
+    }
+  }
+
+  config.units = doc["units"] | config.units;
+  config.refreshMinutes = doc["refresh_minutes"] | config.refreshMinutes;
+  if (config.refreshMinutes < 5) config.refreshMinutes = 5;
+  config.theme = doc["theme"] | config.theme;
+  config.save();
+
+  g_renderRequested = true;
+
+  JsonDocument res;
+  res["ok"] = true;
+  res["place"] = config.placeName;
+  sendJson(200, res);
+}
+
+static void handlePostWifi() {
+  JsonDocument doc;
+  if (deserializeJson(doc, server.arg("plain"))) {
+    sendError(400, "Invalid JSON");
+    return;
+  }
+  String ssid = doc["ssid"] | "";
+  if (!ssid.length()) {
+    sendError(400, "SSID required");
+    return;
+  }
+  // Empty password field means "keep the existing one" unless SSID changed.
+  String pass = doc["pass"] | "";
+  if (pass.length() || ssid != config.wifiSsid) config.wifiPass = pass;
+  config.wifiSsid = ssid;
+  config.save();
+
+  JsonDocument res;
+  res["ok"] = true;
+  sendJson(200, res);
+  delay(200);  // let the response flush before rebooting
+  g_rebootRequested = true;
+}
+
+static void handlePostRefresh() {
+  if (WiFi.status() != WL_CONNECTED) {
+    sendError(503, "Not connected to Wi-Fi");
+    return;
+  }
+  String err;
+  if (!fetchWeather(err)) {
+    sendError(502, err);
+    return;
+  }
+  g_renderRequested = true;
+  JsonDocument res;
+  res["ok"] = true;
+  sendJson(200, res);
+}
+
+static void handleStatus() {
+  JsonDocument doc;
+  doc["place"] = config.placeName;
+
+  if (weather.valid && weather.fetchedAt > 0) {
+    time_t local = weather.fetchedAt + weather.utcOffsetSeconds;
+    struct tm lt;
+    gmtime_r(&local, &lt);
+    char buf[24];
+    int h12 = lt.tm_hour % 12; if (h12 == 0) h12 = 12;
+    snprintf(buf, sizeof(buf), "%d:%02d %s", h12, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
+    doc["last_update"] = buf;
+  }
+
+  int32_t batt = M5.Power.getBatteryLevel();
+  doc["battery_pct"] = batt;  // -1 if unknown
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["rssi"] = WiFi.RSSI();
+    doc["address"] = "http://m5weather.local (" + WiFi.localIP().toString() + ")";
+  } else if (captiveMode) {
+    doc["address"] = "http://" + WiFi.softAPIP().toString();
+  }
+  sendJson(200, doc);
+}
+
+void webServerStart(bool captivePortal) {
+  captiveMode = captivePortal;
+
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/config", HTTP_GET, handleGetConfig);
+  server.on("/api/config", HTTP_POST, handlePostConfig);
+  server.on("/api/wifi", HTTP_POST, handlePostWifi);
+  server.on("/api/refresh", HTTP_POST, handlePostRefresh);
+  server.on("/api/status", HTTP_GET, handleStatus);
+
+  if (captivePortal) {
+    // Answer every DNS query with our AP address so phones/laptops pop the
+    // portal page automatically.
+    dns.start(53, "*", WiFi.softAPIP());
+    server.onNotFound([]() {
+      server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
+      server.send(302, "text/plain", "");
+    });
+  } else {
+    server.onNotFound([]() { server.send(404, "text/plain", "Not found"); });
+  }
+
+  server.begin();
+}
+
+void webServerLoop() {
+  if (captiveMode) dns.processNextRequest();
+  server.handleClient();
+}
