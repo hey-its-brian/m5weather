@@ -31,8 +31,11 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &errorOut) 
     http.end();
     return false;
   }
-  DeserializationError err = deserializeJson(doc, http.getStream());
+  // getString() decodes chunked transfer encoding; feeding the raw stream to
+  // the JSON parser does not (Open-Meteo responds chunked).
+  String body = http.getString();
   http.end();
+  DeserializationError err = deserializeJson(doc, body);
   if (err) {
     errorOut = String("JSON parse: ") + err.c_str();
     return false;

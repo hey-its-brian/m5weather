@@ -81,9 +81,15 @@ void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
   Serial.begin(115200);
+  delay(2000);  // give USB CDC time to enumerate so early logs are visible
+  Serial.printf("[m5weather] board=%d display=%dx%d psram=%u heap=%u\n",
+                (int)M5.getBoard(), M5.Display.width(), M5.Display.height(),
+                ESP.getPsramSize(), ESP.getFreeHeap());
 
   displayInit();
   config.load();
+  Serial.printf("[m5weather] wifi_ssid='%s' zip='%s' theme='%s'\n",
+                config.wifiSsid.c_str(), config.zip.c_str(), config.theme.c_str());
 
   if (!config.hasWifi()) {
     startCaptivePortal("Welcome! Let's get connected.");
@@ -100,6 +106,12 @@ void setup() {
   MDNS.begin(MDNS_NAME);
   MDNS.addService("http", "tcp", 80);
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC; offset comes from the API
+
+  // Wait briefly for the first NTP sync so the initial render has a clock.
+  unsigned long ntpStart = millis();
+  while (time(nullptr) < 1600000000 && millis() - ntpStart < 10000) delay(100);
+  Serial.printf("[m5weather] ntp synced=%d after %lums\n",
+                time(nullptr) >= 1600000000, millis() - ntpStart);
 
   webServerStart(/*captivePortal=*/false);
   fetchAndRender();

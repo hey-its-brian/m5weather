@@ -15,7 +15,10 @@ static M5GFX &gfx() { return M5.Display; }
 
 void displayInit() {
   gfx().setRotation(1);           // portrait panel -> landscape
-  gfx().setEpdMode(epd_mode_t::epd_quality);
+  // epd_fastest = nearest-color lookup with NO dithering. The other modes
+  // Bayer-dither every pixel — even exact palette colors pick up noise dots.
+  // Flat UI colors that match the panel palette exactly render crisp.
+  gfx().setEpdMode(epd_mode_t::epd_fastest);
   gfx().setTextWrap(false);
 }
 
@@ -135,7 +138,34 @@ static void drawWeatherIcon(int code, bool isDay, int cx, int cy, int r, const T
 // Rendering
 // ---------------------------------------------------------------------------
 
-static String fmtTemp(float v) { return String((int)roundf(v)) + "\xC2\xB0"; }
+// Draws a rounded temperature plus a degree ring (the GFX fonts have no "°"
+// glyph). Alignment: 'L' = middle-left, 'R' = middle-right, 'C' = top-center.
+// Uses the currently set font/size; returns nothing.
+static void drawTempValue(float v, int x, int y, char align) {
+  M5GFX &d = gfx();
+  String num((int)roundf(v));
+  int w = d.textWidth(num);
+  int h = d.fontHeight();
+  int r = h / 10 + 1;               // degree ring radius
+  int degSpace = r * 2 + 3;
+
+  int left, top;
+  switch (align) {
+    case 'R': left = x - w - degSpace; top = y - h / 2; break;
+    case 'C': left = x - (w + degSpace) / 2; top = y; break;
+    default:  left = x; top = y - h / 2; break;  // 'L'
+  }
+
+  auto prevDatum = d.getTextDatum();
+  d.setTextDatum(top_left);
+  d.drawString(num, left, top);
+  d.setTextDatum(prevDatum);
+
+  int cx = left + w + r + 2;
+  int cy = top + (int)(h * 0.18f);
+  d.drawCircle(cx, cy, r, d.getTextStyle().fore_rgb888);
+  d.drawCircle(cx, cy, r - 1, d.getTextStyle().fore_rgb888);
+}
 
 static const char *WEEKDAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 static const char *MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -198,7 +228,7 @@ void renderWeather() {
   d.setTextDatum(middle_left);
   d.setFont(&fonts::FreeSansBold24pt7b);
   d.setTextSize(2);
-  d.drawString(fmtTemp(weather.temperature), 215, curY - 10);
+  drawTempValue(weather.temperature, 215, curY - 10, 'L');
   d.setTextSize(1);
 
   d.setFont(&fonts::FreeSans18pt7b);
@@ -214,7 +244,7 @@ void renderWeather() {
   d.drawString("Wind", rx, ry + 84);
   d.setTextColor(t->text, t->bg);
   d.setTextDatum(middle_right);
-  d.drawString(fmtTemp(weather.feelsLike), W - 16, ry);
+  drawTempValue(weather.feelsLike, W - 16, ry, 'R');
   d.drawString(String(weather.humidity) + "%", W - 16, ry + 42);
   d.drawString(String((int)roundf(weather.windSpeed)) + (imperial ? " mph" : " km/h"),
                W - 16, ry + 84);
@@ -239,9 +269,9 @@ void renderWeather() {
     d.setFont(&fonts::FreeSansBold12pt7b);
     d.setTextDatum(top_center);
     d.setTextColor(t->tempHi, t->bg);
-    d.drawString(fmtTemp(day.tempMax), cx - 20, rowTop + 102);
+    drawTempValue(day.tempMax, cx - 20, rowTop + 102, 'C');
     d.setTextColor(t->tempLo, t->bg);
-    d.drawString(fmtTemp(day.tempMin), cx + 24, rowTop + 102);
+    drawTempValue(day.tempMin, cx + 24, rowTop + 102, 'C');
     d.setTextColor(t->text, t->bg);
 
     if (day.precipProb >= 20) {
