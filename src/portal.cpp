@@ -33,11 +33,53 @@ static void sendError(int status, const String &message) {
   sendJson(status, doc);
 }
 
+// --- Request origin checks -------------------------------------------------
+// The API has no auth (trusted-LAN model), so at minimum reject requests that
+// a browser was tricked into sending: DNS rebinding (Host header points at a
+// foreign name that resolved to us) and cross-site POSTs (foreign Origin).
+
+static bool hostMatches(String h) {
+  int colon = h.indexOf(':');
+  if (colon >= 0) h = h.substring(0, colon);
+  h.toLowerCase();
+  if (h == "m5weather.local" || h == "m5weather") return true;
+  if (WiFi.status() == WL_CONNECTED && h == WiFi.localIP().toString()) return true;
+  if (h == WiFi.softAPIP().toString()) return true;
+  return false;
+}
+
+static bool requestAllowed() {
+  if (!hostMatches(server.hostHeader())) return false;
+  String origin = server.header("Origin");
+  if (origin.length()) {  // absent for same-origin GETs and curl; strict if present
+    if (!origin.startsWith("http://")) return false;
+    if (!hostMatches(origin.substring(7))) return false;
+  }
+  return true;
+}
+
+// Returns false (after sending a response) if the request must be rejected.
+static bool guard() {
+  if (requestAllowed()) return true;
+  server.send(403, "text/plain", "Forbidden");
+  return false;
+}
+
 static void handleRoot() {
+  if (!requestAllowed()) {
+    if (captiveMode) {  // captive-portal probes carry foreign Hosts: redirect
+      server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
+      server.send(302, "text/plain", "");
+    } else {
+      server.send(403, "text/plain", "Forbidden");
+    }
+    return;
+  }
   server.send_P(200, "text/html", WEBUI_HTML);
 }
 
 static void handleGetConfig() {
+  if (!guard()) return;
   JsonDocument doc;
   doc["zip"] = config.zip;
   doc["units"] = config.units;
@@ -57,6 +99,7 @@ static void handleGetConfig() {
 }
 
 static void handlePostConfig() {
+  if (!guard()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) {
     sendError(400, "Invalid JSON");
@@ -64,7 +107,11 @@ static void handlePostConfig() {
   }
 
   String zip = doc["zip"] | "";
-  if (zip.length() != 5) {
+  bool zipOk = zip.length() == 5;
+  for (size_t i = 0; zipOk && i < zip.length(); i++) {
+    if (!isDigit(zip[i])) zipOk = false;
+  }
+  if (!zipOk) {
     sendError(400, "Zip code must be 5 digits");
     return;
   }
@@ -98,6 +145,7 @@ static void handlePostConfig() {
 }
 
 static void handlePostWifi() {
+  if (!guard()) return;
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) {
     sendError(400, "Invalid JSON");
@@ -122,6 +170,7 @@ static void handlePostWifi() {
 }
 
 static void handlePostRefresh() {
+  if (!guard()) return;
   if (WiFi.status() != WL_CONNECTED) {
     sendError(503, "Not connected to Wi-Fi");
     return;
@@ -138,6 +187,7 @@ static void handlePostRefresh() {
 }
 
 static void handleStatus() {
+  if (!guard()) return;
   JsonDocument doc;
   doc["place"] = config.placeName;
 
@@ -164,6 +214,9 @@ static void handleStatus() {
 
 void webServerStart(bool captivePortal) {
   captiveMode = captivePortal;
+
+  static const char *COLLECT_HEADERS[] = {"Origin"};
+  server.collectHeaders(COLLECT_HEADERS, 1);
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api/config", HTTP_GET, handleGetConfig);

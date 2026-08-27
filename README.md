@@ -63,6 +63,27 @@ Add an entry to `THEMES[]` in `src/themes.cpp` — it automatically appears in
 the web UI dropdown. Stick to the six colors the Spectra 6 panel physically
 has (black, white, red, yellow, blue, green); M5GFX dithers everything else.
 
+## Security model
+
+Trusted-LAN, no login. Mitigations in place:
+
+- **Host-header validation** on every route — blocks DNS-rebinding attacks
+  (a malicious website resolving its own domain to the device's IP).
+- **Origin checks** — cross-site requests from web pages you visit are
+  rejected with 403, so a drive-by page can't reconfigure the device.
+- **Zip input** is validated (5 digits) server-side before being used in the
+  geocoding URL.
+- **Setup hotspot is WPA2-protected** (password shown on the e-ink screen),
+  so credentials can't be injected by a stranger during first-time setup.
+- **API responses are size-capped** (64KB, HTTP/1.0) so a spoofed server
+  can't exhaust device memory.
+
+Accepted risks: anyone on your LAN can change settings or reboot the device
+(add a PIN if your network is shared); weather API TLS is unverified
+(`setInsecure`) so a MITM could show you wrong weather; WiFi credentials are
+stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
+to you). There is no OTA endpoint — firmware changes require USB.
+
 ## Notes & tradeoffs
 
 - The device stays awake so the config server is always reachable; expect to

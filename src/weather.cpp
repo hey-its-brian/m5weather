@@ -21,6 +21,9 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &errorOut) 
   http.setConnectTimeout(10000);
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  // HTTP/1.0 forbids chunked encoding (which getStream() can't decode and
+  // which hides the response size), so the length check below is reliable.
+  http.useHTTP10(true);
   if (!http.begin(client, url)) {
     errorOut = "http.begin failed";
     return false;
@@ -31,8 +34,11 @@ static bool httpGetJson(const String &url, JsonDocument &doc, String &errorOut) 
     http.end();
     return false;
   }
-  // getString() decodes chunked transfer encoding; feeding the raw stream to
-  // the JSON parser does not (Open-Meteo responds chunked).
+  if (http.getSize() > 65536) {  // don't let a hostile server eat the heap
+    errorOut = "Response too large";
+    http.end();
+    return false;
+  }
   String body = http.getString();
   http.end();
   DeserializationError err = deserializeJson(doc, body);

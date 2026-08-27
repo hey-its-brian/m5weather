@@ -10,6 +10,7 @@
 #include <ESPmDNS.h>
 #include <M5Unified.h>
 #include <WiFi.h>
+#include <esp_sntp.h>
 
 #include "config.h"
 #include "display.h"
@@ -26,13 +27,33 @@ static bool staConnected = false;
 static unsigned long lastFetchMs = 0;
 static uint8_t consecutiveFailures = 0;
 
+// The battery-backed RTC can hold a plausible-but-wrong time, so "epoch looks
+// recent" is not proof of sync — only the SNTP callback is.
+static volatile bool g_timeSynced = false;
+static bool g_timeSyncHandled = false;
+
+// Correct the hardware RTC so future boots start with a sane clock.
+static void syncRtcFromSystemTime() {
+  if (!M5.Rtc.isEnabled()) return;
+  time_t now = time(nullptr);
+  struct tm utc;
+  gmtime_r(&now, &utc);
+  M5.Rtc.setDateTime(&utc);
+  Serial.println("[m5weather] hardware RTC set from NTP");
+}
+
+// WPA2 on the setup hotspot so passers-by can't inject WiFi credentials
+// during the setup window. The password is shown on the e-ink screen.
+static const char *AP_PASS = "m5weather";
+
 static void startCaptivePortal(const String &reason) {
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID);
+  WiFi.softAP(AP_SSID, AP_PASS);
   webServerStart(/*captivePortal=*/true);
   renderStatus("Setup needed",
                reason + "\n\n"
                "1. Join Wi-Fi network:  " + AP_SSID + "\n"
+               "    (password:  " + AP_PASS + ")\n"
                "2. Open:  http://" + WiFi.softAPIP().toString() + "\n"
                "3. Enter your Wi-Fi and zip code");
 }
@@ -105,13 +126,18 @@ void setup() {
 
   MDNS.begin(MDNS_NAME);
   MDNS.addService("http", "tcp", 80);
+  sntp_set_time_sync_notification_cb([](struct timeval *) { g_timeSynced = true; });
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC; offset comes from the API
 
   // Wait briefly for the first NTP sync so the initial render has a clock.
   unsigned long ntpStart = millis();
-  while (time(nullptr) < 1600000000 && millis() - ntpStart < 10000) delay(100);
+  while (!g_timeSynced && millis() - ntpStart < 15000) delay(100);
   Serial.printf("[m5weather] ntp synced=%d after %lums\n",
-                time(nullptr) >= 1600000000, millis() - ntpStart);
+                (int)g_timeSynced, millis() - ntpStart);
+  if (g_timeSynced) {          // synced in time: nothing to redo later
+    syncRtcFromSystemTime();
+    g_timeSyncHandled = true;
+  }
 
   webServerStart(/*captivePortal=*/false);
   fetchAndRender();
@@ -124,6 +150,17 @@ void loop() {
   if (g_rebootRequested) {
     delay(500);
     ESP.restart();
+  }
+
+  // First NTP sync: correct the hardware RTC for future boots, and redo any
+  // timestamp/render taken while the clock was still wrong.
+  if (g_timeSynced && !g_timeSyncHandled) {
+    g_timeSyncHandled = true;
+    syncRtcFromSystemTime();
+    if (weather.valid) {
+      weather.fetchedAt = time(nullptr);  // fetch completed moments ago
+      g_renderRequested = true;
+    }
   }
 
   if (g_renderRequested) {
