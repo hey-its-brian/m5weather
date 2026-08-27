@@ -16,7 +16,7 @@ static M5GFX &gfx() { return M5.Display; }
 void displayInit() {
   gfx().setRotation(1);           // portrait panel -> landscape
   // epd_fastest = nearest-color lookup with NO dithering. The other modes
-  // Bayer-dither every pixel — even exact palette colors pick up noise dots.
+  // Bayer-dither every pixel, so even exact palette colors pick up noise dots.
   // Flat UI colors that match the panel palette exactly render crisp.
   gfx().setEpdMode(epd_mode_t::epd_fastest);
   gfx().setTextWrap(false);

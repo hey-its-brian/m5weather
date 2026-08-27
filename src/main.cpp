@@ -1,4 +1,4 @@
-// M5Weather — weather dashboard for the M5Stack PaperColor.
+// M5Weather: weather dashboard for the M5Stack PaperColor.
 //
 // Boot flow:
 //   - With no Wi-Fi configured (or connect failure): open the
@@ -28,7 +28,7 @@ static unsigned long lastFetchMs = 0;
 static uint8_t consecutiveFailures = 0;
 
 // The battery-backed RTC can hold a plausible-but-wrong time, so "epoch looks
-// recent" is not proof of sync — only the SNTP callback is.
+// recent" is not proof of sync; only the SNTP callback is.
 static volatile bool g_timeSynced = false;
 static bool g_timeSyncHandled = false;
 

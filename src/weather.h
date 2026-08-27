@@ -32,7 +32,7 @@ struct WeatherData {
 extern WeatherData weather;
 
 // Resolve a US zip to lat/lon + place name (Zippopotam.us, no API key).
-// Updates config (not persisted — caller saves). Returns false on failure.
+// Updates config (not persisted; caller saves). Returns false on failure.
 bool geocodeZip(const String &zip, String &errorOut);
 
 // Fetch current + 5-day forecast from Open-Meteo (no API key).

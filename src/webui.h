@@ -94,11 +94,11 @@ static const char WEBUI_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   <div class="card">
     <h2>Status</h2>
     <dl>
-      <dt>Location</dt><dd id="st-place">&mdash;</dd>
-      <dt>Last update</dt><dd id="st-updated">&mdash;</dd>
-      <dt>Battery</dt><dd id="st-batt">&mdash;</dd>
-      <dt>Wi-Fi signal</dt><dd id="st-rssi">&mdash;</dd>
-      <dt>Address</dt><dd id="st-addr">&mdash;</dd>
+      <dt>Location</dt><dd id="st-place">-</dd>
+      <dt>Last update</dt><dd id="st-updated">-</dd>
+      <dt>Battery</dt><dd id="st-batt">-</dd>
+      <dt>Wi-Fi signal</dt><dd id="st-rssi">-</dd>
+      <dt>Address</dt><dd id="st-addr">-</dd>
     </dl>
     <button id="refreshnow" class="secondary">Refresh Weather Now</button>
   </div>

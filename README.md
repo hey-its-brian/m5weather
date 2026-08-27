@@ -1,8 +1,8 @@
 # M5Weather
 
 A weather dashboard for the **M5Stack PaperColor** (ESP32-S3, 4" E Ink
-Spectra 6 color display, 600×400) with a browser-based config UI on your
-local network — change the zip code, units, refresh interval, and theme from
+Spectra 6 color display, 600x400) with a browser-based config UI on your
+local network. Change the zip code, units, refresh interval, and theme from
 your desktop without reflashing.
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/) and zip-code
@@ -14,43 +14,62 @@ an API key or account.
 - Current conditions: temperature, feels-like, humidity, wind, condition icon
 - 5-day forecast with highs (red), lows (blue), and precipitation chance
 - Web config UI at **http://m5weather.local** (mDNS) or the device IP
-- First-boot captive portal: the device opens a `M5Weather-Setup` hotspot;
-  join it and the config page pops up to collect Wi-Fi + zip
-- Theme system (Classic / Night / Forest built in) designed for adding more —
+- First-boot captive portal: the device opens a WPA2-protected
+  `M5Weather-Setup` hotspot and walks you through Wi-Fi and zip setup
+- Theme system (Classic / Night / Forest built in) designed for adding more;
   a theme is just a named palette in `src/themes.cpp`
-- Settings persist in flash (NVS); survives power loss
+- Settings persist in flash (NVS) and survive power loss
+- Hardware RTC is corrected from NTP, so reboots start with an accurate clock
 
-## Building
+## Requirements
 
-Uses [PlatformIO](https://platformio.org/). From the repo root:
+- M5Stack PaperColor (the ESP32-S3 dev kit with the 4" Spectra 6 panel)
+- USB-C cable
+- [PlatformIO Core](https://platformio.org/install/cli) (or the PlatformIO
+  VS Code extension)
+- 2.4 GHz Wi-Fi network (the ESP32-S3 has no 5 GHz radio)
 
-```sh
-pio run                 # build
-pio run -t upload       # flash over USB-C
-pio device monitor      # serial logs (115200)
-```
+## Install
 
-The `platformio.ini` pins the [pioarduino](https://github.com/pioarduino/platform-espressif32)
-ESP32 platform (Arduino core 3.x) plus M5Unified/M5GFX ≥ 0.2.20, the first
-M5GFX release with PaperColor support. No board-specific defines are needed —
-M5GFX autodetects the PaperColor at runtime via its M5PM1 power IC.
+1. Clone and build. The first build downloads the ESP32 toolchain and
+   libraries automatically; give it a few minutes.
 
-## First-time setup
+   ```sh
+   git clone https://github.com/hey-its-brian/m5weather.git
+   cd m5weather
+   pio run
+   ```
 
-1. Flash the firmware. The display shows setup instructions.
-2. On your phone or desktop, join the Wi-Fi network **M5Weather-Setup**.
-3. A config page opens (or browse to `http://192.168.4.1`).
-4. Enter your Wi-Fi credentials → the device reboots and joins your network.
-5. Browse to **http://m5weather.local**, enter your zip code, hit
-   *Save & Update Display*.
+2. Plug the PaperColor in over USB-C and flash:
+
+   ```sh
+   pio run -t upload
+   ```
+
+   If the upload cannot connect ("No serial data received"), put the device
+   in download mode manually: hold BOOT, tap RST, release BOOT, then run the
+   upload again.
+
+3. First-time setup, on the device screen:
+   - Join the Wi-Fi network **M5Weather-Setup** (password `m5weather`).
+   - A config page opens automatically, or browse to `http://192.168.4.1`.
+   - Enter your home Wi-Fi credentials. The device reboots and joins.
+   - Browse to **http://m5weather.local**, enter your zip code, and click
+     *Save & Update Display*.
+
+4. Optional: watch logs with `pio device monitor` (115200 baud).
+
+The device stays awake so the config page is always reachable; plan on USB
+power. A full e-ink refresh takes several seconds with visible flashing,
+which is normal for Spectra 6 panels.
 
 ## Config UI
 
 | Setting | Notes |
 |---|---|
 | Zip code | US 5-digit; validated against Zippopotam.us before saving |
-| Units | °F/mph or °C/km/h |
-| Refresh | 15 min – 3 hours (default 30 min) |
+| Units | F/mph or C/km/h |
+| Refresh | 15 min to 3 hours (default 30 min) |
 | Theme | Palette applied to the e-ink render |
 | Wi-Fi | Changing it reboots the device |
 
@@ -59,17 +78,19 @@ The page also shows battery %, Wi-Fi signal, and last-update time, plus a
 
 ## Adding a theme
 
-Add an entry to `THEMES[]` in `src/themes.cpp` — it automatically appears in
-the web UI dropdown. Stick to the six colors the Spectra 6 panel physically
-has (black, white, red, yellow, blue, green); M5GFX dithers everything else.
+Add an entry to `THEMES[]` in `src/themes.cpp` and it automatically appears
+in the web UI dropdown. Stick to the six colors the Spectra 6 panel
+physically has. The driver's exact palette values are defined at the top of
+that file; anything else gets snapped to the nearest ink color because
+dithering is disabled (dithering covers the panel in visible dot noise).
 
 ## Security model
 
 Trusted-LAN, no login. Mitigations in place:
 
-- **Host-header validation** on every route — blocks DNS-rebinding attacks
+- **Host-header validation** on every route blocks DNS-rebinding attacks
   (a malicious website resolving its own domain to the device's IP).
-- **Origin checks** — cross-site requests from web pages you visit are
+- **Origin checks**: cross-site requests from web pages you visit are
   rejected with 403, so a drive-by page can't reconfigure the device.
 - **Zip input** is validated (5 digits) server-side before being used in the
   geocoding URL.
@@ -80,24 +101,44 @@ Trusted-LAN, no login. Mitigations in place:
 
 Accepted risks: anyone on your LAN can change settings or reboot the device
 (add a PIN if your network is shared); weather API TLS is unverified
-(`setInsecure`) so a MITM could show you wrong weather; WiFi credentials are
+(`setInsecure`) so a MITM could show you wrong weather; Wi-Fi credentials are
 stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
-to you). There is no OTA endpoint — firmware changes require USB.
+to you). There is no OTA endpoint, so firmware changes require USB.
 
-## Notes & tradeoffs
+## Version notes
 
-- The device stays awake so the config server is always reachable; expect to
-  run it on USB power. (Deep-sleep-between-refreshes would stretch the
-  battery to weeks but would make the web UI unreachable while sleeping —
-  possible future toggle.)
-- A full e-ink refresh takes several seconds with visible flashing. Normal
-  for Spectra 6.
-- Weather APIs are called over plain HTTP (nothing sensitive is sent) to
-  avoid TLS certificate maintenance in firmware.
+### 1.0.0 (2026-08-27)
+
+Initial release.
+
+- Current conditions plus 5-day forecast rendered on the Spectra 6 panel
+- Web config UI (zip, units, refresh interval, theme) at m5weather.local
+- Captive-portal first-boot setup over a WPA2 hotspot
+- Three built-in themes with an extensible palette registry
+- Security hardening: Host/Origin request validation, server-side zip
+  validation, size-capped API responses
+- NTP time sync that distrusts the factory RTC value and writes the
+  corrected time back to the RTC
+
+Hardware findings baked into this release, for anyone porting:
+
+- M5GFX 0.2.20+ autodetects the PaperColor at runtime (via its M5PM1 power
+  IC); no board defines needed, but OPI PSRAM must be enabled or panel init
+  fails
+- The EPD dither modes (`epd_quality`, `epd_text`, `epd_fast`) Bayer-dither
+  every pixel, including exact palette colors; use `epd_fastest` for flat UI
+- The GFX fonts have no degree-sign glyph; this firmware draws the degree
+  marker as a ring
+- Open-Meteo responds with chunked transfer encoding, which HTTPClient's raw
+  stream does not decode; read the body with `getString()` (or force
+  HTTP/1.0) before JSON parsing
+- Serial over the built-in USB-C port needs `ARDUINO_USB_MODE=1` and
+  `ARDUINO_USB_CDC_ON_BOOT=1` build flags
 
 ## Roadmap
 
 - [ ] More themes; per-theme layout (not just palette)
 - [ ] Hourly forecast view
 - [ ] Optional deep-sleep battery mode
+- [ ] Optional config-page PIN
 - [ ] Non-US postal code support (Zippopotam supports ~60 countries)
