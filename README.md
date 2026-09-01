@@ -17,8 +17,9 @@ an API key or account.
 - Web config UI at **http://m5weather.local** (mDNS) or the device IP
 - First-boot captive portal: the device opens a WPA2-protected
   `M5Weather-Setup` hotspot and walks you through Wi-Fi and zip setup
-- Theme system (Classic / Night / Forest built in) designed for adding more;
-  a theme is just a named palette in `src/themes.cpp`
+- Theme system (Classic / Night / Forest / Comic / Time Circuit built in)
+  designed for adding more; a theme is a named palette plus an optional
+  rendering style in `src/themes.cpp`
 - Settings persist in flash (NVS) and survive power loss
 - Hardware RTC is corrected from NTP, so reboots start with an accurate clock
 
@@ -85,6 +86,16 @@ physically has. The driver's exact palette values are defined at the top of
 that file; anything else gets snapped to the nearest ink color because
 dithering is disabled (dithering covers the panel in visible dot noise).
 
+A theme can also set a rendering `style`. `STYLE_FLAT` (default) is the
+plain dashboard; `STYLE_COMIC` reuses the flat layout with comic flourishes
+(heavy panel frames with drop shadows, a yellow caption box, a speech
+bubble); `STYLE_CIRCUIT` swaps in a fully custom renderer, the Back to the
+Future time circuit: three seven-segment rows (red destination = tomorrow's
+date with HI/LO temps, green present time, yellow last time departed = last
+fetch) over a gauge strip with outdoor, indoor, humidity, and wind. To build
+your own layout, add a style to the enum in `src/themes.h` and branch on it
+in `src/display.cpp` (see `renderTimeCircuit`).
+
 ## Security model
 
 Trusted-LAN, no login. Mitigations in place:
@@ -107,6 +118,17 @@ stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
 to you). There is no OTA endpoint, so firmware changes require USB.
 
 ## Version notes
+
+### 1.2.0 (2026-09-01)
+
+- Two new themes: Comic (heavy panel frames, drop shadows, caption box,
+  speech bubble) and Time Circuit (Back to the Future DeLorean layout with
+  seven-segment digits drawn from primitives)
+- Theme system extended from palette-only to palette + rendering style,
+  completing the "per-theme layout" roadmap item; the Spectra 6's red,
+  green, and yellow inks happen to match the movie prop exactly
+- Note: the Time Circuit theme trades the 5-day forecast for tomorrow's
+  HI/LO in the destination row
 
 ### 1.1.0 (2026-09-01)
 
@@ -158,7 +180,7 @@ Hardware findings baked into this release, for anyone porting:
 
 ## Roadmap
 
-- [ ] More themes; per-theme layout (not just palette)
+- [x] More themes; per-theme layout (not just palette): shipped in 1.2.0
 - [ ] Hourly forecast view
 - [ ] Optional deep-sleep battery mode
 - [ ] Optional config-page PIN

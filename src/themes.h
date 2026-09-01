@@ -18,7 +18,13 @@ struct Theme {
   uint32_t sun;
   uint32_t cloud;
   uint32_t rain;
+  // Rendering style. STYLE_FLAT is the default dashboard; STYLE_COMIC adds
+  // heavy panel frames, a caption box, and a speech bubble; STYLE_CIRCUIT is
+  // the Back to the Future time-circuit layout (custom renderer).
+  uint8_t style = 0;
 };
+
+enum ThemeStyle : uint8_t { STYLE_FLAT = 0, STYLE_COMIC = 1, STYLE_CIRCUIT = 2 };
 
 const Theme *themeById(const String &id);   // falls back to the first theme
 const Theme *themeList(size_t &count);

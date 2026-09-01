@@ -49,6 +49,36 @@ static const Theme THEMES[] = {
         .cloud = C_WHITE,
         .rain = C_BLUE,
     },
+    {
+        .id = "comic",
+        .label = "Comic",
+        .bg = C_WHITE,
+        .text = C_BLACK,
+        .subtext = C_BLACK,
+        .accent = C_RED,
+        .tempHi = C_RED,
+        .tempLo = C_BLUE,
+        .sun = C_YELLOW,
+        .cloud = C_WHITE,
+        .rain = C_BLUE,
+        .style = STYLE_COMIC,
+    },
+    {
+        // Colors map to the movie prop: red destination row, green present
+        // row, yellow departed row, white labels, all on black.
+        .id = "circuit",
+        .label = "Time Circuit",
+        .bg = C_BLACK,
+        .text = C_WHITE,
+        .subtext = C_WHITE,
+        .accent = C_GREEN,
+        .tempHi = C_RED,
+        .tempLo = C_BLUE,
+        .sun = C_YELLOW,
+        .cloud = C_WHITE,
+        .rain = C_BLUE,
+        .style = STYLE_CIRCUIT,
+    },
 };
 
 const Theme *themeById(const String &id) {

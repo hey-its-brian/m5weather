@@ -168,6 +168,34 @@ static void drawTempValue(float v, int x, int y, char align) {
   d.drawCircle(cx, cy, r - 1, d.getTextStyle().fore_rgb888);
 }
 
+
+// ---------------------------------------------------------------------------
+// Comic style primitives
+// ---------------------------------------------------------------------------
+
+// A filled panel with a heavy frame and an offset drop shadow.
+static void drawComicPanel(int x, int y, int w, int h, const Theme *t, uint32_t fill) {
+  M5GFX &d = gfx();
+  d.fillRect(x + 4, y + 4, w, h, t->text);   // drop shadow
+  d.fillRect(x, y, w, h, fill);
+  for (int k = 0; k < 3; k++) d.drawRect(x + k, y + k, w - 2 * k, h - 2 * k, t->text);
+}
+
+// Speech bubble with a tail pointing at (tailX, tailY). The tail fill is
+// drawn after the border so it opens a gap in the bubble's left edge.
+static void drawSpeechBubble(int x, int y, int w, int h, int tailX, int tailY, const Theme *t) {
+  M5GFX &d = gfx();
+  d.fillRoundRect(x, y, w, h, 14, t->bg);
+  d.drawRoundRect(x, y, w, h, 14, t->text);
+  d.drawRoundRect(x + 1, y + 1, w - 2, h - 2, 13, t->text);
+  int ty1 = y + h / 2 - 8, ty2 = y + h / 2 + 8;
+  d.fillTriangle(x + 6, ty1, x + 6, ty2, tailX, tailY, t->bg);
+  d.drawLine(x + 6, ty1, tailX, tailY, t->text);
+  d.drawLine(x + 7, ty1, tailX + 1, tailY, t->text);
+  d.drawLine(x + 6, ty2, tailX, tailY, t->text);
+  d.drawLine(x + 7, ty2, tailX + 1, tailY, t->text);
+}
+
 static const char *WEEKDAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 static const char *MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -182,8 +210,206 @@ static bool localTime(time_t utc, struct tm &out) {
   return true;
 }
 
+
+// ---------------------------------------------------------------------------
+// Time-circuit style (Back to the Future DeLorean dashboard)
+// ---------------------------------------------------------------------------
+
+// Segment bit order: A top, B tr, C br, D bottom, E bl, F tl, G middle.
+static const uint8_t SEG_DIGITS[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66,
+                                       0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+
+static void drawSeg7Char(char c, int x, int y, int w, int h, int th, uint32_t color) {
+  uint8_t m = 0;
+  if (c >= '0' && c <= '9') m = SEG_DIGITS[c - '0'];
+  else if (c == '-') m = 0x40;
+  else return;  // space: leave the cell dark
+  M5GFX &d = gfx();
+  int hw = w - 2 * th;            // horizontal segment length
+  int vh = (h - 3 * th) / 2;      // vertical segment length
+  if (m & 0x01) d.fillRect(x + th, y, hw, th, color);
+  if (m & 0x02) d.fillRect(x + w - th, y + th, th, vh, color);
+  if (m & 0x04) d.fillRect(x + w - th, y + 2 * th + vh, th, vh, color);
+  if (m & 0x08) d.fillRect(x + th, y + h - th, hw, th, color);
+  if (m & 0x10) d.fillRect(x, y + 2 * th + vh, th, vh, color);
+  if (m & 0x20) d.fillRect(x, y + th, th, vh, color);
+  if (m & 0x40) d.fillRect(x + th, y + th + vh, hw, th, color);
+}
+
+// Draw `sv` right-aligned inside a group whose right edge is `xRight`.
+static void drawSeg7Right(const String &sv, int xRight, int y, int w, int h,
+                          int th, int gap, uint32_t color) {
+  int x = xRight - (int)sv.length() * (w + gap) + gap;
+  for (size_t i = 0; i < sv.length(); i++) {
+    drawSeg7Char(sv[i], x, y, w, h, th, color);
+    x += w + gap;
+  }
+}
+
+static const char *MONTHS_UP[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                  "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+// One circuit row: month/day/year plus two 2-digit fields (hour:min, or
+// hi/lo temps). ampm: 0 = AM, 1 = PM, -1 = hide the lamps.
+static void drawCircuitRow(int y, const char *title, uint32_t color,
+                           const struct tm *date, const String &f1, const String &f2,
+                           const char *l1, const char *l2, int ampm, bool colon,
+                           const Theme *t) {
+  M5GFX &d = gfx();
+  const int DW = 26, DH = 38, TH = 5, GAP = 6;
+  const int digY = y + 14;
+
+  d.drawRect(10, y, 580, 74, t->text);
+
+  // Tiny labels above each group.
+  d.setFont(&fonts::Font0);
+  d.setTextDatum(top_center);
+  d.setTextColor(t->text, t->bg);
+  d.drawString("MONTH", 76, y + 4);
+  d.drawString("DAY", 169, y + 4);
+  d.drawString("YEAR", 262, y + 4);
+  d.drawString(l1, 429, y + 4);
+  d.drawString(l2, 505, y + 4);
+
+  if (date) {
+    d.setTextDatum(middle_center);
+    d.setTextColor(color, t->bg);
+    d.drawString(MONTHS_UP[date->tm_mon], 76, digY + DH / 2, &fonts::FreeSansBold18pt7b);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d", date->tm_mday);
+    drawSeg7Right(buf, 198, digY, DW, DH, TH, GAP, color);
+    snprintf(buf, sizeof(buf), "%d", date->tm_year + 1900);
+    drawSeg7Right(buf, 326, digY, DW, DH, TH, GAP, color);
+  } else {
+    drawSeg7Right("--", 198, digY, DW, DH, TH, GAP, color);
+    drawSeg7Right("----", 326, digY, DW, DH, TH, GAP, color);
+  }
+
+  // AM/PM lamps.
+  if (ampm >= 0) {
+    d.setFont(&fonts::Font0);
+    d.setTextDatum(middle_left);
+    d.setTextColor(t->text, t->bg);
+    if (ampm == 0) d.fillCircle(352, digY + 10, 4, color); else d.drawCircle(352, digY + 10, 4, t->text);
+    if (ampm == 1) d.fillCircle(352, digY + 28, 4, color); else d.drawCircle(352, digY + 28, 4, t->text);
+    d.drawString("AM", 361, digY + 10);
+    d.drawString("PM", 361, digY + 28);
+  }
+
+  drawSeg7Right(f1, 458, digY, DW, DH, TH, GAP, color);
+  if (colon) {
+    d.fillRect(465, digY + 10, 5, 5, color);
+    d.fillRect(465, digY + 24, 5, 5, color);
+  }
+  drawSeg7Right(f2, 534, digY, DW, DH, TH, GAP, color);
+
+  // Title plate under the digits.
+  d.fillRect(140, y + 58, 320, 14, t->text);
+  d.setFont(&fonts::Font0);
+  d.setTextDatum(middle_center);
+  d.setTextColor(t->bg, t->text);
+  d.drawString(title, 300, y + 65);
+  d.setTextColor(t->text, t->bg);
+}
+
+static void renderTimeCircuit(const Theme *t) {
+  M5GFX &d = gfx();
+  const uint32_t RED = t->tempHi, GREEN = t->accent, YELLOW = t->sun;
+  const bool imperial = config.units == "imperial";
+
+  d.startWrite();
+  d.fillScreen(t->bg);
+
+  struct tm now, dest, dep;
+  bool haveNow = localTime(time(nullptr), now);
+  bool haveDest = localTime(time(nullptr) + 86400, dest);
+  bool haveDep = localTime(weather.fetchedAt, dep);
+  char f1[8], f2[8];
+
+  // Row 1: tomorrow's forecast rides in the destination slot.
+  String hi = "--", lo = "--";
+  if (weather.valid) {
+    hi = String((int)roundf(weather.daily[1].tempMax));
+    lo = String((int)roundf(weather.daily[1].tempMin));
+  }
+  drawCircuitRow(6, "DESTINATION TIME", RED, haveDest ? &dest : nullptr,
+                 hi, lo, "HI", "LO", -1, false, t);
+
+  if (haveNow) {
+    int h12 = now.tm_hour % 12; if (h12 == 0) h12 = 12;
+    snprintf(f1, sizeof(f1), "%02d", h12);
+    snprintf(f2, sizeof(f2), "%02d", now.tm_min);
+    drawCircuitRow(88, "PRESENT TIME", GREEN, &now, f1, f2, "HOUR", "MIN",
+                   now.tm_hour < 12 ? 0 : 1, true, t);
+  } else {
+    drawCircuitRow(88, "PRESENT TIME", GREEN, nullptr, "--", "--", "HOUR", "MIN", -1, true, t);
+  }
+
+  if (haveDep) {
+    int h12 = dep.tm_hour % 12; if (h12 == 0) h12 = 12;
+    snprintf(f1, sizeof(f1), "%02d", h12);
+    snprintf(f2, sizeof(f2), "%02d", dep.tm_min);
+    drawCircuitRow(170, "LAST TIME DEPARTED", YELLOW, &dep, f1, f2, "HOUR", "MIN",
+                   dep.tm_hour < 12 ? 0 : 1, true, t);
+  } else {
+    drawCircuitRow(170, "LAST TIME DEPARTED", YELLOW, nullptr, "--", "--", "HOUR", "MIN", -1, true, t);
+  }
+
+  // Bottom strip: outdoor temp, humidity/wind, indoor SHT40, condition.
+  d.drawRect(10, 252, 580, 142, t->text);
+  d.setFont(&fonts::Font0);
+  d.setTextDatum(top_left);
+  d.setTextColor(t->text, t->bg);
+  d.drawString(imperial ? "OUTDOOR TEMP F" : "OUTDOOR TEMP C", 30, 262);
+
+  if (weather.valid) {
+    String ot = String((int)roundf(weather.temperature));
+    int xr = 30 + 3 * 48;  // fixed 3-cell field
+    drawSeg7Right(ot, xr, 276, 40, 62, 8, 8, YELLOW);
+  }
+
+  d.setFont(&fonts::FreeSans12pt7b);
+  d.setTextDatum(top_left);
+  d.setTextColor(GREEN, t->bg);
+  if (weather.valid) {
+    d.drawString("HUM " + String(weather.humidity) + "%", 230, 280);
+    d.drawString("WIND " + String((int)roundf(weather.windSpeed)) +
+                 (imperial ? " MPH" : " KMH"), 230, 312);
+  }
+
+  d.setFont(&fonts::Font0);
+  d.setTextColor(t->text, t->bg);
+  d.drawString(imperial ? "INDOOR TEMP F / RH" : "INDOOR TEMP C / RH", 410, 262);
+  if (room.valid) {
+    float rt = imperial ? room.tempC * 9.0f / 5.0f + 32.0f : room.tempC;
+    drawSeg7Right(String((int)roundf(rt)), 470, 276, 24, 36, 5, 5, YELLOW);
+    drawSeg7Right(String((int)roundf(room.humidity)), 545, 276, 24, 36, 5, 5, YELLOW);
+    d.setFont(&fonts::FreeSans9pt7b);
+    d.setTextColor(YELLOW, t->bg);
+    d.drawString("%", 550, 292);
+  }
+
+  d.setTextDatum(top_center);
+  d.setTextColor(t->text, t->bg);
+  if (weather.valid) {
+    String cond = wmoDescription(weather.code);
+    cond.toUpperCase();
+    d.drawString(cond, 300, 352, &fonts::FreeSansBold12pt7b);
+  } else {
+    d.drawString("WAITING FOR WEATHER DATA", 300, 352, &fonts::FreeSansBold12pt7b);
+  }
+  d.setFont(&fonts::Font0);
+  String place = config.placeName; place.toUpperCase();
+  d.drawString(place, 300, 380);
+
+  d.setTextDatum(top_left);
+  d.endWrite();
+  d.display();
+}
+
 void renderWeather() {
   const Theme *t = themeById(config.theme);
+  if (t->style == STYLE_CIRCUIT) { renderTimeCircuit(t); return; }
   M5GFX &d = gfx();
 
   d.startWrite();
@@ -192,9 +418,17 @@ void renderWeather() {
 
   // --- Header: place, date, updated time ---
   d.setFont(&fonts::FreeSansBold12pt7b);
-  d.setTextDatum(top_left);
-  d.setCursor(16, 14);
-  d.print(config.placeName.length() ? config.placeName : "M5Weather");
+  String place = config.placeName.length() ? config.placeName : "M5Weather";
+  if (t->style == STYLE_COMIC) {
+    // Yellow caption box, comic-cover style, behind the place name.
+    drawComicPanel(12, 8, d.textWidth(place) + 24, 40, t, t->sun);
+    d.setTextDatum(middle_left);
+    d.drawString(place, 24, 29);
+  } else {
+    d.setTextDatum(top_left);
+    d.setCursor(16, 14);
+    d.print(place);
+  }
 
   // Date is "now"; the updated stamp is when the weather was actually fetched.
   struct tm lt, ft;
@@ -211,7 +445,7 @@ void renderWeather() {
     d.drawString(String("updated ") + timeBuf, W - 16, 42, &fonts::FreeSans9pt7b);
     d.setTextColor(t->text, t->bg);
   }
-  d.fillRect(16, 64, W - 32, 3, t->accent);
+  if (t->style != STYLE_COMIC) d.fillRect(16, 64, W - 32, 3, t->accent);
 
   if (!weather.valid) {
     d.setTextDatum(middle_center);
@@ -224,6 +458,7 @@ void renderWeather() {
 
   // --- Current conditions ---
   const int curY = 155;
+  if (t->style == STYLE_COMIC) drawComicPanel(10, 72, 580, 168, t, t->bg);
   drawWeatherIcon(weather.code, weather.isDay, 110, curY, 68, t);
 
   d.setTextDatum(middle_left);
@@ -232,8 +467,17 @@ void renderWeather() {
   drawTempValue(weather.temperature, 215, curY - 10, 'L');
   d.setTextSize(1);
 
-  d.setFont(&fonts::FreeSans18pt7b);
-  d.drawString(wmoDescription(weather.code), 218, curY + 52);
+  if (t->style == STYLE_COMIC) {
+    // Condition text in a speech bubble pointing at the weather icon.
+    d.setFont(&fonts::FreeSansBold12pt7b);
+    String desc = wmoDescription(weather.code);
+    int bx = 212, by = curY + 40, bw = d.textWidth(desc) + 30, bh = 40;
+    drawSpeechBubble(bx, by, bw, bh, 172, curY + 74, t);
+    d.drawString(desc, bx + 18, by + bh / 2);
+  } else {
+    d.setFont(&fonts::FreeSans18pt7b);
+    d.drawString(wmoDescription(weather.code), 218, curY + 52);
+  }
 
   // Right column: feels like / humidity / wind / indoor (from the SHT40)
   const bool imperial = config.units == "imperial";
@@ -261,12 +505,13 @@ void renderWeather() {
 
   // --- 5-day forecast ---
   const int rowTop = 248;
-  d.drawFastHLine(16, rowTop, W - 32, t->subtext);
+  if (t->style != STYLE_COMIC) d.drawFastHLine(16, rowTop, W - 32, t->subtext);
 
   const int colW = (W - 32) / FORECAST_DAYS;
   for (int i = 0; i < FORECAST_DAYS; i++) {
     const DailyForecast &day = weather.daily[i];
     int cx = 16 + colW * i + colW / 2;
+    if (t->style == STYLE_COMIC) drawComicPanel(16 + colW * i + 2, rowTop + 2, colW - 10, 144, t, t->bg);
 
     d.setTextDatum(top_center);
     d.setTextColor(i == 0 ? t->accent : t->text, t->bg);
@@ -286,11 +531,12 @@ void renderWeather() {
 
     if (day.precipProb >= 20) {
       d.setTextColor(t->rain, t->bg);
-      d.drawString(String(day.precipProb) + "%", cx, rowTop + 128, &fonts::FreeSans9pt7b);
+      d.drawString(String(day.precipProb) + "%", cx, rowTop + (t->style == STYLE_COMIC ? 122 : 128),
+                   &fonts::FreeSans9pt7b);
       d.setTextColor(t->text, t->bg);
     }
 
-    if (i > 0) d.drawFastVLine(16 + colW * i, rowTop + 14, 118, t->subtext);
+    if (t->style != STYLE_COMIC && i > 0) d.drawFastVLine(16 + colW * i, rowTop + 14, 118, t->subtext);
   }
 
   d.setTextDatum(top_left);
