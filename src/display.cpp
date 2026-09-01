@@ -4,6 +4,7 @@
 #include <time.h>
 
 #include "config.h"
+#include "sensor.h"
 #include "themes.h"
 #include "weather.h"
 
@@ -171,13 +172,13 @@ static const char *WEEKDAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 static const char *MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-// Local time at the configured location, derived from NTP time (UTC) plus the
-// UTC offset Open-Meteo reported for the location.
-static bool localNow(struct tm &out) {
-  time_t now = time(nullptr);
-  if (now < 1600000000) return false;  // NTP not synced yet
-  now += weather.utcOffsetSeconds;
-  gmtime_r(&now, &out);
+// Convert a UTC epoch to local time at the configured location using the UTC
+// offset Open-Meteo reported. Without a successful fetch the offset is unknown
+// (it would silently be UTC), so this refuses until weather data is valid.
+static bool localTime(time_t utc, struct tm &out) {
+  if (!weather.valid || utc < 1600000000) return false;  // no offset / no NTP yet
+  utc += weather.utcOffsetSeconds;
+  gmtime_r(&utc, &out);
   return true;
 }
 
@@ -195,15 +196,15 @@ void renderWeather() {
   d.setCursor(16, 14);
   d.print(config.placeName.length() ? config.placeName : "M5Weather");
 
-  struct tm lt;
-  bool haveTime = localNow(lt);
-  if (haveTime) {
+  // Date is "now"; the updated stamp is when the weather was actually fetched.
+  struct tm lt, ft;
+  if (localTime(time(nullptr), lt) && localTime(weather.fetchedAt, ft)) {
     char dateBuf[40], timeBuf[24];
     snprintf(dateBuf, sizeof(dateBuf), "%s, %s %d",
              WEEKDAYS[lt.tm_wday], MONTHS[lt.tm_mon], lt.tm_mday);
-    int h12 = lt.tm_hour % 12; if (h12 == 0) h12 = 12;
-    snprintf(timeBuf, sizeof(timeBuf), "%d:%02d %s", h12, lt.tm_min,
-             lt.tm_hour < 12 ? "AM" : "PM");
+    int h12 = ft.tm_hour % 12; if (h12 == 0) h12 = 12;
+    snprintf(timeBuf, sizeof(timeBuf), "%d:%02d %s", h12, ft.tm_min,
+             ft.tm_hour < 12 ? "AM" : "PM");
     d.setTextDatum(top_right);
     d.drawString(dateBuf, W - 16, 14, &fonts::FreeSans12pt7b);
     d.setTextColor(t->subtext, t->bg);
@@ -234,20 +235,29 @@ void renderWeather() {
   d.setFont(&fonts::FreeSans18pt7b);
   d.drawString(wmoDescription(weather.code), 218, curY + 52);
 
-  // Right column: feels like / humidity / wind
+  // Right column: feels like / humidity / wind / indoor (from the SHT40)
   const bool imperial = config.units == "imperial";
+  const int rowGap = 38;
   d.setFont(&fonts::FreeSans12pt7b);
   d.setTextColor(t->subtext, t->bg);
-  int rx = 445, ry = curY - 52;
+  int rx = 445, ry = curY - 60;
   d.drawString("Feels like", rx, ry);
-  d.drawString("Humidity", rx, ry + 42);
-  d.drawString("Wind", rx, ry + 84);
+  d.drawString("Humidity", rx, ry + rowGap);
+  d.drawString("Wind", rx, ry + rowGap * 2);
+  if (room.valid) d.drawString("Indoor", rx, ry + rowGap * 3);
   d.setTextColor(t->text, t->bg);
   d.setTextDatum(middle_right);
   drawTempValue(weather.feelsLike, W - 16, ry, 'R');
-  d.drawString(String(weather.humidity) + "%", W - 16, ry + 42);
+  d.drawString(String(weather.humidity) + "%", W - 16, ry + rowGap);
   d.drawString(String((int)roundf(weather.windSpeed)) + (imperial ? " mph" : " km/h"),
-               W - 16, ry + 84);
+               W - 16, ry + rowGap * 2);
+  if (room.valid) {
+    // "72°  45%": humidity right-aligned, temperature to its left.
+    String rh = String((int)roundf(room.humidity)) + "%";
+    d.drawString(rh, W - 16, ry + rowGap * 3);
+    float roomT = imperial ? room.tempC * 9.0f / 5.0f + 32.0f : room.tempC;
+    drawTempValue(roomT, W - 16 - d.textWidth(rh) - 12, ry + rowGap * 3, 'R');
+  }
 
   // --- 5-day forecast ---
   const int rowTop = 248;

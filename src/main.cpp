@@ -16,11 +16,13 @@
 #include "display.h"
 #include "weather.h"
 #include "portal.h"
+#include "sensor.h"
 
 static const char *AP_SSID = "M5Weather-Setup";
 static const char *MDNS_NAME = "m5weather";
 
 volatile bool g_renderRequested = false;
+volatile bool g_fetchRequested = false;   // set by the portal after a location change
 volatile bool g_rebootRequested = false;
 
 static bool staConnected = false;
@@ -85,6 +87,7 @@ static void fetchAndRender() {
     return;
   }
 
+  sensorRead();  // refresh the indoor reading alongside the forecast
   if (fetchWeather(err)) {
     consecutiveFailures = 0;
     renderWeather();
@@ -108,6 +111,8 @@ void setup() {
                 ESP.getPsramSize(), ESP.getFreeHeap());
 
   displayInit();
+  sensorInit();
+  sensorRead();  // log a boot reading so the sensor path is easy to verify
   config.load();
   Serial.printf("[m5weather] wifi_ssid='%s' zip='%s' theme='%s'\n",
                 config.wifiSsid.c_str(), config.zip.c_str(), config.theme.c_str());
@@ -163,8 +168,21 @@ void loop() {
     }
   }
 
+  // A saved location change needs a fresh fetch, not just a redraw; without
+  // it the dashboard shows "Waiting for weather data" until the next timer.
+  if (g_fetchRequested) {
+    g_fetchRequested = false;
+    if (staConnected && WiFi.status() == WL_CONNECTED) {
+      fetchAndRender();
+      g_renderRequested = false;
+    } else {
+      g_renderRequested = true;
+    }
+  }
+
   if (g_renderRequested) {
     g_renderRequested = false;
+    sensorRead();
     renderWeather();
   }
 

@@ -96,6 +96,7 @@ static const char WEBUI_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
     <dl>
       <dt>Location</dt><dd id="st-place">-</dd>
       <dt>Last update</dt><dd id="st-updated">-</dd>
+      <dt>Indoor</dt><dd id="st-room">-</dd>
       <dt>Battery</dt><dd id="st-batt">-</dd>
       <dt>Wi-Fi signal</dt><dd id="st-rssi">-</dd>
       <dt>Address</dt><dd id="st-addr">-</dd>
@@ -126,6 +127,11 @@ async function loadStatus() {
     const s = await (await fetch('/api/status')).json();
     $('st-place').textContent = s.place || '(not set)';
     $('st-updated').textContent = s.last_update || 'never';
+    if (s.room_temp_c !== undefined) {
+      const f = Math.round(s.room_temp_c * 9 / 5 + 32);
+      $('st-room').textContent = f + '\u00b0F / ' + s.room_temp_c.toFixed(1) +
+        '\u00b0C, ' + s.room_humidity + '% RH';
+    } else { $('st-room').textContent = 'no sensor'; }
     $('st-batt').textContent = s.battery_pct >= 0 ? s.battery_pct + '%' : 'n/a';
     $('st-rssi').textContent = s.rssi ? s.rssi + ' dBm' : 'n/a';
     $('st-addr').textContent = s.address || '';

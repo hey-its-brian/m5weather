@@ -12,6 +12,7 @@ an API key or account.
 ## Features
 
 - Current conditions: temperature, feels-like, humidity, wind, condition icon
+- Indoor temperature and humidity from the onboard SHT40 sensor
 - 5-day forecast with highs (red), lows (blue), and precipitation chance
 - Web config UI at **http://m5weather.local** (mDNS) or the device IP
 - First-boot captive portal: the device opens a WPA2-protected
@@ -106,6 +107,26 @@ stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
 to you). There is no OTA endpoint, so firmware changes require USB.
 
 ## Version notes
+
+### 1.1.0 (2026-09-01)
+
+- Indoor temperature and humidity from the PaperColor's onboard SHT40,
+  shown as an "Indoor" row under the current conditions and exposed as
+  `room_temp_c` / `room_humidity` in `GET /api/status`
+- M5Unified has no SHT4x class; `src/sensor.cpp` drives the chip directly
+  over `M5.In_I2C` (address 0x44, command 0xFD, CRC-8 checked). It probes
+  the internal bus first and falls back to the Grove port, so a Grove SHT40
+  on another board works without changes
+- The reading refreshes on every weather fetch, so the indoor row is at most
+  one refresh interval old
+- Fix: saving a new zip in the web UI now fetches weather immediately instead
+  of leaving "Waiting for weather data" on screen until the next refresh timer
+- Fix: the header's "updated" stamp now shows the time of the last successful
+  fetch in local time; before any fetch it displayed UTC because the location's
+  UTC offset was not known yet, so the header now stays hidden until then
+- Flashing note: the PaperColor has no BOOT button. If esptool reports "No
+  serial data received", hold the side power button for about 6 seconds with
+  USB connected to enter download mode, flash, then press it once to reboot
 
 ### 1.0.0 (2026-08-27)
 

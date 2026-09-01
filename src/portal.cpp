@@ -8,6 +8,7 @@
 #include <time.h>
 
 #include "config.h"
+#include "sensor.h"
 #include "themes.h"
 #include "weather.h"
 #include "webui.h"
@@ -15,6 +16,7 @@
 // Set by handlers, consumed by the main loop (rendering the e-ink display
 // takes seconds, so it must not happen inside an HTTP handler).
 extern volatile bool g_renderRequested;
+extern volatile bool g_fetchRequested;
 extern volatile bool g_rebootRequested;
 
 static WebServer server(80);
@@ -118,7 +120,8 @@ static void handlePostConfig() {
 
   // Resolve the zip before committing, so a typo doesn't wipe a working
   // location. Requires internet, which captive-portal mode doesn't have.
-  if (zip != config.zip || !config.hasLocation()) {
+  bool locationChanged = zip != config.zip || !config.hasLocation();
+  if (locationChanged) {
     if (WiFi.status() != WL_CONNECTED) {
       sendError(503, "Not connected to Wi-Fi yet; set Wi-Fi first");
       return;
@@ -136,7 +139,9 @@ static void handlePostConfig() {
   config.theme = doc["theme"] | config.theme;
   config.save();
 
-  g_renderRequested = true;
+  // A new location (or no data yet) needs a fetch; otherwise just redraw.
+  if (locationChanged || !weather.valid) g_fetchRequested = true;
+  else g_renderRequested = true;
 
   JsonDocument res;
   res["ok"] = true;
@@ -199,6 +204,11 @@ static void handleStatus() {
     int h12 = lt.tm_hour % 12; if (h12 == 0) h12 = 12;
     snprintf(buf, sizeof(buf), "%d:%02d %s", h12, lt.tm_min, lt.tm_hour < 12 ? "AM" : "PM");
     doc["last_update"] = buf;
+  }
+
+  if (room.valid) {
+    doc["room_temp_c"] = roundf(room.tempC * 10) / 10;
+    doc["room_humidity"] = (int)roundf(room.humidity);
   }
 
   int32_t batt = M5.Power.getBatteryLevel();
