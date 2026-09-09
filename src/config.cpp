@@ -18,6 +18,7 @@ void AppConfig::load() {
   units          = prefs.getString("units", "imperial");
   refreshMinutes = prefs.getUShort("refresh_min", 30);
   theme          = prefs.getString("theme", "classic");
+  altTheme       = prefs.getString("alt_theme", "");
   prefs.end();
 
   if (refreshMinutes < 5) refreshMinutes = 5;
@@ -35,5 +36,6 @@ void AppConfig::save() const {
   prefs.putString("units", units);
   prefs.putUShort("refresh_min", refreshMinutes);
   prefs.putString("theme", theme);
+  prefs.putString("alt_theme", altTheme);
   prefs.end();
 }

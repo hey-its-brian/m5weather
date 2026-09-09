@@ -23,6 +23,10 @@ static const char *MDNS_NAME = "m5weather";
 
 volatile bool g_renderRequested = false;
 volatile bool g_fetchRequested = false;   // set by the portal after a location change
+
+// Alternate view: any of the three user buttons (top edge) flips the display
+// between the primary theme and config.altTheme. Not persisted; boots primary.
+volatile bool g_altView = false;
 volatile bool g_rebootRequested = false;
 
 static bool staConnected = false;
@@ -151,6 +155,15 @@ void setup() {
 void loop() {
   M5.update();
   webServerLoop();
+
+  // Physical theme toggle. Only meaningful once the dashboard is up, and
+  // only when an alternate theme is configured.
+  if (staConnected && config.altTheme.length() &&
+      (M5.BtnA.wasClicked() || M5.BtnB.wasClicked() || M5.BtnC.wasClicked())) {
+    g_altView = !g_altView;
+    Serial.printf("[m5weather] button: alt view %s\n", g_altView ? "on" : "off");
+    g_renderRequested = true;
+  }
 
   if (g_rebootRequested) {
     delay(500);

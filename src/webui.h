@@ -76,6 +76,8 @@ static const char WEBUI_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
     </div>
     <label for="theme">Theme</label>
     <select id="theme"></select>
+    <label for="alttheme">Alternate view (press a top button to switch)</label>
+    <select id="alttheme"></select>
     <button id="save">Save &amp; Update Display</button>
     <div id="msg"></div>
   </div>
@@ -117,6 +119,9 @@ async function load() {
     $('theme').innerHTML = c.themes.map(t =>
       `<option value="${t.id}">${t.label}</option>`).join('');
     $('theme').value = c.theme;
+    $('alttheme').innerHTML = '<option value="">(off)</option>' + c.themes.map(t =>
+      `<option value="${t.id}">${t.label}</option>`).join('');
+    $('alttheme').value = c.alt_theme || '';
     $('ssid').value = c.wifi_ssid || '';
   } catch (e) { msg('Could not load settings: ' + e, 'err'); }
   loadStatus();
@@ -151,6 +156,7 @@ $('save').onclick = async () => {
         zip, units: $('units').value,
         refresh_minutes: parseInt($('refresh').value, 10),
         theme: $('theme').value,
+        alt_theme: $('alttheme').value,
       }),
     });
     const j = await r.json();

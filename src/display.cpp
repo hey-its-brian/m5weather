@@ -8,6 +8,15 @@
 #include "themes.h"
 #include "weather.h"
 
+// Set when the user toggles to the alternate view with a hardware button.
+extern volatile bool g_altView;
+
+// The theme for the currently selected view.
+static const Theme *activeTheme() {
+  if (g_altView && config.altTheme.length()) return themeById(config.altTheme);
+  return themeById(config.theme);
+}
+
 // Landscape: 600 wide x 400 tall after rotation.
 static const int W = 600;
 static const int H = 400;
@@ -408,7 +417,7 @@ static void renderTimeCircuit(const Theme *t) {
 }
 
 void renderWeather() {
-  const Theme *t = themeById(config.theme);
+  const Theme *t = activeTheme();
   if (t->style == STYLE_CIRCUIT) { renderTimeCircuit(t); return; }
   M5GFX &d = gfx();
 

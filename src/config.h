@@ -18,6 +18,7 @@ struct AppConfig {
   String units = "imperial";   // "imperial" | "metric"
   uint16_t refreshMinutes = 30;
   String theme = "classic";
+  String altTheme;     // alternate view theme; empty = feature off
 
   bool hasWifi() const { return wifiSsid.length() > 0; }
   bool hasLocation() const { return latitude != 0 || longitude != 0; }

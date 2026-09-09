@@ -20,6 +20,8 @@ an API key or account.
 - Theme system (Classic / Night / Forest / Comic / Time Circuit built in)
   designed for adding more; a theme is a named palette plus an optional
   rendering style in `src/themes.cpp`
+- Alternate view: an optional second theme, toggled from the buttons on the
+  top edge of the unit, so two layouts are one press apart
 - Settings persist in flash (NVS) and survive power loss
 - Hardware RTC is corrected from NTP, so reboots start with an accurate clock
 
@@ -118,6 +120,15 @@ stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
 to you). There is no OTA endpoint, so firmware changes require USB.
 
 ## Version notes
+
+### 1.3.0 (2026-09-09)
+
+- Alternate view: a second theme dropdown ("Alternate view") in the config
+  UI, persisted as `alt_theme`. Pressing any of the three top-edge user
+  buttons (M5Unified BtnA/B/C, GPIO 10/9/1) flips the display between the
+  primary and alternate themes; it is a redraw only, no network fetch
+- The toggle is ignored during captive-portal setup, always boots into the
+  primary theme, and falls back to primary if the alternate is cleared
 
 ### 1.2.0 (2026-09-01)
 

@@ -17,6 +17,7 @@
 // takes seconds, so it must not happen inside an HTTP handler).
 extern volatile bool g_renderRequested;
 extern volatile bool g_fetchRequested;
+extern volatile bool g_altView;
 extern volatile bool g_rebootRequested;
 
 static WebServer server(80);
@@ -87,6 +88,7 @@ static void handleGetConfig() {
   doc["units"] = config.units;
   doc["refresh_minutes"] = config.refreshMinutes;
   doc["theme"] = config.theme;
+  doc["alt_theme"] = config.altTheme;
   doc["wifi_ssid"] = config.wifiSsid;
 
   JsonArray themes = doc["themes"].to<JsonArray>();
@@ -137,6 +139,9 @@ static void handlePostConfig() {
   config.refreshMinutes = doc["refresh_minutes"] | config.refreshMinutes;
   if (config.refreshMinutes < 5) config.refreshMinutes = 5;
   config.theme = doc["theme"] | config.theme;
+  config.altTheme = String(doc["alt_theme"] | config.altTheme.c_str());
+  // Clearing the alternate while it is showing must fall back to primary.
+  if (config.altTheme.length() == 0) g_altView = false;
   config.save();
 
   // A new location (or no data yet) needs a fetch; otherwise just redraw.
