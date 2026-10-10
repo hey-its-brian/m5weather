@@ -1,6 +1,7 @@
 #include "display.h"
 
 #include <M5Unified.h>
+#include <WiFi.h>
 #include <time.h>
 
 #include "config.h"
@@ -150,8 +151,8 @@ static void drawWeatherIcon(int code, bool isDay, int cx, int cy, int r, const T
 
 // Draws a rounded temperature plus a degree ring (the GFX fonts have no "°"
 // glyph). Alignment: 'L' = middle-left, 'R' = middle-right, 'C' = top-center.
-// Uses the currently set font/size; returns nothing.
-static void drawTempValue(float v, int x, int y, char align) {
+// Uses the currently set font/size; returns the total width drawn.
+static int drawTempValue(float v, int x, int y, char align) {
   M5GFX &d = gfx();
   String num((int)roundf(v));
   int w = d.textWidth(num);
@@ -175,6 +176,7 @@ static void drawTempValue(float v, int x, int y, char align) {
   int cy = top + (int)(h * 0.18f);
   d.drawCircle(cx, cy, r, d.getTextStyle().fore_rgb888);
   d.drawCircle(cx, cy, r - 1, d.getTextStyle().fore_rgb888);
+  return w + degSpace;
 }
 
 
@@ -416,9 +418,381 @@ static void renderTimeCircuit(const Theme *t) {
   d.display();
 }
 
+// ---------------------------------------------------------------------------
+// DECK//OS style: the Tab5 cyberdeck's HUD, translated to six inks
+// ---------------------------------------------------------------------------
+//
+// Layout mirrors the deck's weather module: header with module title and
+// status chips, a chamfered left panel (location, hero temperature, condition,
+// a "// NOW" readout), a trace chart, and a row of forecast tiles with the
+// current day lit in the accent. The deck's dim grays become one ink
+// (t->subtext) with thinner mono faces for hierarchy; its faint background
+// grid becomes dotted lines so it stays quiet without dithering. Fonts:
+// Orbitron (the deck's display face, bundled with M5GFX) for the title and
+// hero number, FreeMono for HUD text, Font2 for tiny readouts.
+
+// Chamfer corner flags, same bits as the deck's deck_panel().
+enum : uint8_t { CUT_TL = 1, CUT_TR = 2, CUT_BR = 4, CUT_BL = 8 };
+
+static const int GRID_STEP = 30;   // grid cell size
+static const int GRID_DOT = 3;     // one ink dot every N px along a grid line
+
+static void drawDeckGrid(const Theme *t) {
+  M5GFX &d = gfx();
+  for (int x = GRID_STEP; x < W; x += GRID_STEP)
+    for (int y = 0; y < H; y += GRID_DOT) d.drawPixel(x, y, t->grid);
+  for (int y = GRID_STEP; y < H; y += GRID_STEP)
+    for (int x = 0; x < W; x += GRID_DOT) d.drawPixel(x, y, t->grid);
+}
+
+// Single-pixel outline of a rectangle with the flagged corners cut at 45
+// degrees by `c` px.
+static void strokeChamfer(int x, int y, int w, int h, uint8_t cuts, int c, uint32_t col) {
+  M5GFX &d = gfx();
+  int x2 = x + w - 1, y2 = y + h - 1;
+  int px[8], py[8], n = 0;
+  auto add = [&](int ax, int ay) { px[n] = ax; py[n] = ay; n++; };
+  if (cuts & CUT_TL) { add(x, y + c); add(x + c, y); } else add(x, y);
+  if (cuts & CUT_TR) { add(x2 - c, y); add(x2, y + c); } else add(x2, y);
+  if (cuts & CUT_BR) { add(x2, y2 - c); add(x2 - c, y2); } else add(x2, y2);
+  if (cuts & CUT_BL) { add(x + c, y2); add(x, y2 - c); } else add(x, y2);
+  for (int i = 0; i < n; i++) {
+    int j = (i + 1) % n;
+    d.drawLine(px[i], py[i], px[j], py[j], col);
+  }
+}
+
+// Opaque fill of the same chamfered shape; the cut-off corner triangles are
+// left untouched so the background grid shows through them.
+static void fillChamfer(int x, int y, int w, int h, uint8_t cuts, int c, uint32_t col) {
+  M5GFX &d = gfx();
+  int x2 = x + w - 1, y2 = y + h - 1;
+  int tl = (cuts & CUT_TL) ? c : 0, tr = (cuts & CUT_TR) ? c : 0;
+  int br = (cuts & CUT_BR) ? c : 0, bl = (cuts & CUT_BL) ? c : 0;
+  d.fillRect(x, y + c, w, h - 2 * c, col);
+  d.fillRect(x + tl, y, w - tl - tr, c, col);
+  d.fillRect(x + bl, y + h - c, w - bl - br, c, col);
+  if (tl) d.fillTriangle(x, y + c, x + c, y, x + c, y + c, col);
+  if (tr) d.fillTriangle(x2 - c, y, x2, y + c, x2 - c, y + c, col);
+  if (br) d.fillTriangle(x2, y2 - c, x2 - c, y2, x2 - c, y2 - c, col);
+  if (bl) d.fillTriangle(x, y2 - c, x + c, y2, x + c, y2 - c, col);
+}
+
+// Panel: filled in the background color, 2 px outline, optional accent tab
+// along the top edge (the deck's "lit" marker). The inner stroke uses a cut
+// one px smaller so the two 45-degree passes sit flush with no gaps.
+static void drawDeckPanel(int x, int y, int w, int h, int c, uint8_t cuts,
+                          uint32_t outline, uint32_t tab, int tabW, const Theme *t) {
+  fillChamfer(x, y, w, h, cuts, c, t->bg);
+  strokeChamfer(x, y, w, h, cuts, c, outline);
+  strokeChamfer(x + 1, y + 1, w - 2, h - 2, cuts, c - 1, outline);
+  if (tabW > 0) {
+    int tx = x + ((cuts & CUT_TL) ? c : 0) + 6;
+    gfx().fillRect(tx, y, tabW, 3, tab);
+  }
+}
+
+// A 2 px line, thickened perpendicular to its dominant axis.
+static void drawLine2(int x1, int y1, int x2, int y2, uint32_t col) {
+  M5GFX &d = gfx();
+  d.drawLine(x1, y1, x2, y2, col);
+  if (abs(y2 - y1) > abs(x2 - x1)) d.drawLine(x1 + 1, y1, x2 + 1, y2, col);
+  else d.drawLine(x1, y1 + 1, x2, y2 + 1, col);
+}
+
+// "// TITLE" in the accent followed by a rule out to xRight (deck_section).
+static void drawDeckSection(const char *title, int x, int y, int xRight, const Theme *t) {
+  M5GFX &d = gfx();
+  d.setFont(&fonts::FreeMonoBold9pt7b);
+  d.setTextDatum(middle_left);
+  d.setTextColor(t->accent, t->bg);
+  String s = String("// ") + title;
+  d.drawString(s, x, y);
+  int rx = x + d.textWidth(s) + 8;
+  if (rx < xRight) d.fillRect(rx, y, xRight - rx, 2, t->subtext);
+}
+
+// Pick the first font the string fits in at `maxW`; falls back to `small`.
+static const lgfx::IFont *fitFont(const String &s, int maxW,
+                                  const lgfx::IFont *big, const lgfx::IFont *small) {
+  gfx().setFont(big);
+  if (gfx().textWidth(s) <= maxW) return big;
+  gfx().setFont(small);
+  return small;
+}
+
+// Hi / lo / rain-chance polylines across the 5 forecast days inside the plot
+// area (x, y, w, h). Temperature scale spans the week's lows to highs with a
+// minimum 10-degree span so a flat week does not get amplified into noise.
+static void drawDeckTrace(int x, int y, int w, int h, const Theme *t) {
+  M5GFX &d = gfx();
+  float tmin = 1e9f, tmax = -1e9f;
+  for (int i = 0; i < FORECAST_DAYS; i++) {
+    tmin = fminf(tmin, weather.daily[i].tempMin);
+    tmax = fmaxf(tmax, weather.daily[i].tempMax);
+  }
+  if (tmax - tmin < 10.0f) {
+    float mid = (tmax + tmin) * 0.5f;
+    tmin = mid - 5.0f; tmax = mid + 5.0f;
+  }
+  tmin -= 2.0f; tmax += 2.0f;
+
+  auto px = [&](int i) { return x + (int)((i + 0.5f) * w / FORECAST_DAYS); };
+  auto py = [&](float v) { return y + h - 1 - (int)((v - tmin) / (tmax - tmin) * (h - 1)); };
+  auto pr = [&](int p) { return y + h - 1 - (int)(p / 100.0f * (h - 1)); };
+
+  // Dotted guides: one per day column, three horizontal quarters.
+  for (int i = 0; i < FORECAST_DAYS; i++)
+    for (int yy = y; yy < y + h; yy += GRID_DOT) d.drawPixel(px(i), yy, t->grid);
+  for (int q = 1; q <= 3; q++) {
+    int yy = y + h * q / 4;
+    for (int xx = x; xx < x + w; xx += GRID_DOT) d.drawPixel(xx, yy, t->grid);
+  }
+
+  for (int i = 0; i + 1 < FORECAST_DAYS; i++) {
+    const DailyForecast &a = weather.daily[i], &b = weather.daily[i + 1];
+    drawLine2(px(i), pr(a.precipProb), px(i + 1), pr(b.precipProb), t->accent2);
+    d.drawLine(px(i), py(a.tempMin), px(i + 1), py(b.tempMin), t->subtext);
+    drawLine2(px(i), py(a.tempMax), px(i + 1), py(b.tempMax), t->accent);
+  }
+  for (int i = 0; i < FORECAST_DAYS; i++) {
+    const DailyForecast &dd = weather.daily[i];
+    d.fillCircle(px(i), pr(dd.precipProb), 2, t->accent2);
+    d.fillCircle(px(i), py(dd.tempMin), 2, t->subtext);
+    d.fillCircle(px(i), py(dd.tempMax), 3, t->accent);
+  }
+  d.fillRect(x, y + h, w, 2, t->accent2);   // the deck's baseline bar
+}
+
+static void drawDeckHeader(const Theme *t) {
+  M5GFX &d = gfx();
+
+  // "M5 // WEATHER": module tag in the accent, slashes dim, name in text.
+  d.setFont(&fonts::Orbitron_Light_24);
+  d.setTextDatum(top_left);
+  int x = 16;
+  d.setTextColor(t->accent, t->bg);
+  d.drawString("M5", x, 5);       x += d.textWidth("M5 ");
+  d.setTextColor(t->subtext, t->bg);
+  d.drawString("//", x, 5);       x += d.textWidth("// ");
+  d.setTextColor(t->text, t->bg);
+  d.drawString("WEATHER", x, 5);
+
+  // Status chips, right to left: battery, network, date.
+  d.setFont(&fonts::Font2);
+  d.setTextDatum(middle_right);
+  int rx = W - 16;
+  int batt = M5.Power.getBatteryLevel();
+  if (batt >= 0) {
+    d.setTextColor(t->accent, t->bg);
+    String b = "BAT " + String(batt) + "%";
+    d.drawString(b, rx, 17);
+    rx -= d.textWidth(b) + 14;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    d.setTextColor(t->accent, t->bg);
+    d.drawString("NET", rx, 17);
+    rx -= d.textWidth("NET") + 14;
+  }
+  struct tm lt;
+  if (localTime(time(nullptr), lt)) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%s %02d %s %d", WEEKDAYS[lt.tm_wday], lt.tm_mday,
+             MONTHS_UP[lt.tm_mon], lt.tm_year + 1900);
+    String ds(buf); ds.toUpperCase();
+    d.setTextColor(t->subtext, t->bg);
+    d.drawString(ds, rx, 17);
+  }
+
+  // Header rule with the deck's accent bar under the title and a short
+  // secondary bar beside it.
+  d.drawFastHLine(0, 34, W, t->subtext);
+  d.fillRect(16, 33, 80, 3, t->accent);
+  d.fillRect(120, 33, 32, 3, t->accent2);
+}
+
+// Label in the dim mono face at the left edge of a readout row.
+static void drawDeckLabel(const char *label, int x, int y, const Theme *t) {
+  M5GFX &d = gfx();
+  d.setFont(&fonts::FreeMono9pt7b);
+  d.setTextDatum(middle_left);
+  d.setTextColor(t->subtext, t->bg);
+  d.drawString(label, x, y);
+  d.setFont(&fonts::FreeMonoBold9pt7b);
+  d.setTextDatum(middle_right);
+  d.setTextColor(t->text, t->bg);
+}
+
+static void renderDeck(const Theme *t) {
+  M5GFX &d = gfx();
+  const bool imperial = config.units == "imperial";
+
+  // Icons follow the deck's monochrome outline style: accent strokes, hollow
+  // clouds, secondary neon for rain.
+  Theme icon = *t;
+  icon.text = t->accent;
+  icon.subtext = t->accent;
+  icon.sun = t->accent;
+  icon.cloud = t->bg;
+  icon.rain = t->accent2;
+
+  // Geometry (600 x 400).
+  const int LX = 10, LY = 44, LW = 220, LH = 346;      // left panel
+  const int LC = 24, LR = LX + LW - 14;                // content left / right
+  const int RX = 242, RW = 348;                        // right column
+  const int CY = 62, CH = 160, CC = 10;                // chart panel
+  const int PX = RX + 16, PY = CY + 14, PW = RW - 32, PH = CH - 32;  // plot area
+  const int TY = 234, TH = 156, TW = 66, TGAP = 4, TX0 = 243;        // tiles
+
+  d.startWrite();
+  d.fillScreen(t->bg);
+  drawDeckGrid(t);
+  drawDeckHeader(t);
+
+  drawDeckPanel(LX, LY, LW, LH, 14, CUT_TL | CUT_BR, t->subtext, t->accent2, 40, t);
+  drawDeckSection("5D TRACE", RX, 50, RX + 150, t);
+  drawDeckPanel(RX, CY, RW, CH, CC, CUT_TL | CUT_BR, t->subtext, 0, 0, t);
+
+  // Chart legend, right-aligned on the section row.
+  d.setFont(&fonts::Font2);
+  d.setTextDatum(middle_right);
+  int lx = W - 16;
+  d.setTextColor(t->accent2, t->bg); d.drawString("RAIN %", lx, 50); lx -= d.textWidth("RAIN %") + 10;
+  d.setTextColor(t->subtext, t->bg); d.drawString("LO", lx, 50);     lx -= d.textWidth("LO") + 10;
+  d.setTextColor(t->accent, t->bg);  d.drawString("HI", lx, 50);
+
+  if (!weather.valid) {
+    for (int i = 0; i < FORECAST_DAYS; i++)
+      drawDeckPanel(TX0 + i * (TW + TGAP), TY, TW, TH, 8, CUT_TL | CUT_BR, t->subtext, 0, 0, t);
+    d.setFont(&fonts::FreeMonoBold12pt7b);
+    d.setTextDatum(middle_center);
+    d.setTextColor(t->accent2, t->bg);
+    d.drawString("UPLINK // OPEN-METEO...", RX + RW / 2, CY + CH / 2);
+    d.setFont(&fonts::FreeMono9pt7b);
+    d.setTextColor(t->subtext, t->bg);
+    d.drawString("NO DATA", LX + LW / 2, LY + LH / 2);
+    d.setTextDatum(top_left);
+    d.endWrite();
+    d.display();
+    return;
+  }
+
+  // --- Left panel: location pin + name ---
+  d.fillCircle(29, 64, 4, t->text);
+  d.fillTriangle(25, 66, 33, 66, 29, 74, t->text);
+  d.fillCircle(29, 64, 1, t->bg);
+  String place = config.placeName.length() ? config.placeName : "M5WEATHER";
+  d.setFont(fitFont(place, LR - 40, &fonts::FreeMonoBold12pt7b, &fonts::FreeMonoBold9pt7b));
+  d.setTextDatum(middle_left);
+  d.setTextColor(t->text, t->bg);
+  d.drawString(place, 40, 66);
+
+  // Hero: icon left, Orbitron temperature right.
+  drawWeatherIcon(weather.code, weather.isDay, 46, 118, 26, &icon);
+  d.setFont(&fonts::Orbitron_Light_24);
+  d.setTextSize(2);
+  d.setTextColor(t->text, t->bg);
+  drawTempValue(weather.temperature, 84, 118, 'L');
+  d.setTextSize(1);
+
+  // Condition in the secondary neon, then today's H / L in dim.
+  String cond = wmoDescription(weather.code);
+  cond.toUpperCase();
+  d.setFont(fitFont(cond, LR - LC, &fonts::FreeMonoBold12pt7b, &fonts::FreeMonoBold9pt7b));
+  d.setTextDatum(top_left);
+  d.setTextColor(t->accent2, t->bg);
+  d.drawString(cond, LC, 152);
+
+  d.setFont(&fonts::FreeMono9pt7b);
+  d.setTextDatum(middle_left);
+  d.setTextColor(t->subtext, t->bg);
+  int hx = LC;
+  d.drawString("H", hx, 192);  hx += d.textWidth("H ");
+  hx += drawTempValue(weather.daily[0].tempMax, hx, 192, 'L') + d.textWidth("  ");
+  d.drawString("L", hx, 192);  hx += d.textWidth("L ");
+  drawTempValue(weather.daily[0].tempMin, hx, 192, 'L');
+
+  // "// NOW" readout rows: label dim-left, value bold-right.
+  drawDeckSection("NOW", LC, 214, LR, t);
+  int ry = 238;
+  const int ROW = 26;
+  drawDeckLabel("FEELS", LC, ry, t);
+  drawTempValue(weather.feelsLike, LR, ry, 'R');
+  ry += ROW;
+  drawDeckLabel("HUMIDITY", LC, ry, t);
+  d.drawString(String(weather.humidity) + "%", LR, ry);
+  ry += ROW;
+  drawDeckLabel("WIND", LC, ry, t);
+  d.drawString(String((int)roundf(weather.windSpeed)) + (imperial ? " MPH" : " KMH"), LR, ry);
+  ry += ROW;
+  drawDeckLabel("RAIN", LC, ry, t);
+  d.drawString(String(weather.daily[0].precipProb) + "%", LR, ry);
+  ry += ROW;
+  if (room.valid) {
+    drawDeckLabel("INDOOR", LC, ry, t);
+    String rh = String((int)roundf(room.humidity)) + "%";
+    d.drawString(rh, LR, ry);
+    float roomT = imperial ? room.tempC * 9.0f / 5.0f + 32.0f : room.tempC;
+    drawTempValue(roomT, LR - d.textWidth(rh) - 10, ry, 'R');
+  }
+
+  // Footer: fetch time, deck phrasing.
+  struct tm ft;
+  if (localTime(weather.fetchedAt, ft)) {
+    int h12 = ft.tm_hour % 12; if (h12 == 0) h12 = 12;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "LIVE // UPDATED %d:%02d %s", h12, ft.tm_min,
+             ft.tm_hour < 12 ? "AM" : "PM");
+    d.setFont(&fonts::Font2);
+    d.setTextDatum(middle_left);
+    d.setTextColor(t->subtext, t->bg);
+    d.drawString(buf, LC, 372);
+  }
+
+  // --- Trace chart ---
+  drawDeckTrace(PX, PY, PW, PH, t);
+
+  // --- Forecast tiles ---
+  for (int i = 0; i < FORECAST_DAYS; i++) {
+    const DailyForecast &day = weather.daily[i];
+    const bool lit = (i == 0);
+    int tx = TX0 + i * (TW + TGAP);
+    int cx = tx + TW / 2;
+    drawDeckPanel(tx, TY, TW, TH, 8, CUT_TL | CUT_BR,
+                  lit ? t->accent : t->subtext, t->accent, lit ? 24 : 0, t);
+
+    String name = lit ? "TODAY" : String(WEEKDAYS[day.weekday]);
+    name.toUpperCase();
+    d.setFont(&fonts::FreeSansBold9pt7b);
+    d.setTextDatum(top_center);
+    d.setTextColor(lit ? t->accent : t->text, t->bg);
+    d.drawString(name, cx, TY + 14);
+
+    drawWeatherIcon(day.code, true, cx, TY + 56, 16, &icon);
+
+    d.setFont(&fonts::FreeMonoBold12pt7b);
+    d.setTextDatum(top_center);
+    d.setTextColor(t->text, t->bg);
+    drawTempValue(day.tempMax, cx, TY + 84, 'C');
+
+    d.setFont(&fonts::FreeMono9pt7b);
+    d.setTextColor(t->subtext, t->bg);
+    drawTempValue(day.tempMin, cx, TY + 110, 'C');
+
+    d.setFont(&fonts::Font2);
+    d.setTextColor(day.precipProb >= 20 ? t->accent2 : t->subtext, t->bg);
+    d.drawString(String(day.precipProb) + "%", cx, TY + 132);
+  }
+
+  d.setTextDatum(top_left);
+  d.endWrite();
+  d.display();
+}
+
 void renderWeather() {
   const Theme *t = activeTheme();
   if (t->style == STYLE_CIRCUIT) { renderTimeCircuit(t); return; }
+  if (t->style == STYLE_DECK) { renderDeck(t); return; }
   M5GFX &d = gfx();
 
   d.startWrite();

@@ -17,9 +17,9 @@ an API key or account.
 - Web config UI at **http://m5weather.local** (mDNS) or the device IP
 - First-boot captive portal: the device opens a WPA2-protected
   `M5Weather-Setup` hotspot and walks you through Wi-Fi and zip setup
-- Theme system (Classic / Night / Forest / Comic / Time Circuit built in)
-  designed for adding more; a theme is a named palette plus an optional
-  rendering style in `src/themes.cpp`
+- Theme system (Classic / Night / Forest / Comic / Time Circuit / DECK//OS
+  built in) designed for adding more; a theme is a named palette plus an
+  optional rendering style in `src/themes.cpp`
 - Alternate view: an optional second theme, toggled from the buttons on the
   top edge of the unit, so two layouts are one press apart
 - Settings persist in flash (NVS) and survive power loss
@@ -94,9 +94,15 @@ plain dashboard; `STYLE_COMIC` reuses the flat layout with comic flourishes
 bubble); `STYLE_CIRCUIT` swaps in a fully custom renderer, the Back to the
 Future time circuit: three seven-segment rows (red destination = tomorrow's
 date with HI/LO temps, green present time, yellow last time departed = last
-fetch) over a gauge strip with outdoor, indoor, humidity, and wind. To build
-your own layout, add a style to the enum in `src/themes.h` and branch on it
-in `src/display.cpp` (see `renderTimeCircuit`).
+fetch) over a gauge strip with outdoor, indoor, humidity, and wind.
+`STYLE_DECK` is the Tab5 cyberdeck's DECK//OS HUD: a dotted background grid,
+chamfered panels with 2 px outlines and accent tabs, a hero temperature in
+Orbitron, a `// NOW` readout, a 5-day hi/lo/rain trace, and forecast tiles
+with the current day lit. It ships in the deck's four accents (Netrunner,
+Arasaka, Nomad, Militech), mapped by hue onto the panel's inks; Nomad
+(yellow) and Netrunner (blue) read brightest on the e-ink. To build your own
+layout, add a style to the enum in `src/themes.h` and branch on it in
+`src/display.cpp` (see `renderTimeCircuit` and `renderDeck`).
 
 ## Security model
 
@@ -120,6 +126,20 @@ stored unencrypted in NVS flash (use ESP32 flash encryption if that matters
 to you). There is no OTA endpoint, so firmware changes require USB.
 
 ## Version notes
+
+### 1.4.0 (2026-10-10)
+
+- DECK//OS theme: the Tab5 cyberdeck's HUD ported to the PaperColor as a
+  fourth rendering style (`STYLE_DECK`), in four accent variants matching the
+  deck's NETRUNNER / ARASAKA / NOMAD / MILITECH palettes
+- The deck's gray tones have no ink equivalent and dithering stays off, so
+  "dim" is a second ink (blue where free, else white with a thinner mono
+  face) and the faint background grid is drawn as dotted lines
+- Orbitron, the deck's display font, is bundled with M5GFX and now used for
+  the header and hero temperature; `drawTempValue` returns the drawn width
+  so inline temperatures can be composed
+- `Theme` gains `accent2` (secondary neon) and `grid` fields, unused by the
+  older styles
 
 ### 1.3.0 (2026-09-09)
 
