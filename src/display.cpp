@@ -4,6 +4,9 @@
 #include <WiFi.h>
 #include <time.h>
 
+#include <algorithm>
+#include <initializer_list>
+
 #include "config.h"
 #include "sensor.h"
 #include "themes.h"
@@ -152,13 +155,34 @@ static void drawWeatherIcon(int code, bool isDay, int cx, int cy, int r, const T
 // Draws a rounded temperature plus a degree ring (the GFX fonts have no "°"
 // glyph). Alignment: 'L' = middle-left, 'R' = middle-right, 'C' = top-center.
 // Uses the currently set font/size; returns the total width drawn.
+static int degreeSpace() { return (gfx().fontHeight() / 10 + 1) * 2 + 3; }
+
+// Width drawTempValue would use for `v` in the current font, without drawing.
+static int tempValueWidth(float v) {
+  return gfx().textWidth(String((int)roundf(v))) + degreeSpace();
+}
+
+// Sets the first font from `fonts` (largest first) in which `text` fits within
+// `maxW`, falling back to the last one. Returns the chosen font.
+static const lgfx::IFont *fitFont(const String &text, int maxW,
+                                  std::initializer_list<const lgfx::IFont *> fonts) {
+  M5GFX &d = gfx();
+  const lgfx::IFont *chosen = nullptr;
+  for (const lgfx::IFont *f : fonts) {
+    chosen = f;
+    d.setFont(f);
+    if (d.textWidth(text) <= maxW) break;
+  }
+  return chosen;
+}
+
 static int drawTempValue(float v, int x, int y, char align) {
   M5GFX &d = gfx();
   String num((int)roundf(v));
   int w = d.textWidth(num);
   int h = d.fontHeight();
   int r = h / 10 + 1;               // degree ring radius
-  int degSpace = r * 2 + 3;
+  int degSpace = degreeSpace();
 
   int left, top;
   switch (align) {
@@ -841,49 +865,70 @@ void renderWeather() {
 
   // --- Current conditions ---
   const int curY = 155;
+  const bool imperial = config.units == "imperial";
+  const float roomT = imperial ? room.tempC * 9.0f / 5.0f + 32.0f : room.tempC;
+  const String humStr = String(weather.humidity) + "%";
+  const String windStr = String((int)roundf(weather.windSpeed)) + (imperial ? " mph" : " km/h");
+  const String rhStr = String((int)roundf(room.humidity)) + "%";
+
+  // Right column geometry: labels left-aligned at rx, values right-aligned at
+  // the edge. rx moves left from 445 as far as the widest row needs (the
+  // indoor row carries two values), so a label never runs into its value.
+  const int RIGHT = W - 16, LABEL_GAP = 10, PAIR_GAP = 8, rowGap = 38;
+  d.setFont(&fonts::FreeSans12pt7b);
+  int need = d.textWidth("Feels like") + LABEL_GAP + tempValueWidth(weather.feelsLike);
+  need = std::max(need, (int)d.textWidth("Humidity") + LABEL_GAP + (int)d.textWidth(humStr));
+  need = std::max(need, (int)d.textWidth("Wind") + LABEL_GAP + (int)d.textWidth(windStr));
+  if (room.valid)
+    need = std::max(need, (int)d.textWidth("Indoor") + LABEL_GAP + tempValueWidth(roomT) +
+                              PAIR_GAP + (int)d.textWidth(rhStr));
+  const int rx = std::min(445, RIGHT - need);
+  const int ry = curY - 60;
+  // The condition text shares a line with the indoor row, so it must end
+  // before rx when that row is shown; otherwise it has the full width.
+  const int descRight = (room.valid ? rx : RIGHT) - 12;
+
   if (t->style == STYLE_COMIC) drawComicPanel(10, 72, 580, 168, t, t->bg);
   drawWeatherIcon(weather.code, weather.isDay, 110, curY, 68, t);
 
   d.setTextDatum(middle_left);
   d.setFont(&fonts::FreeSansBold24pt7b);
   d.setTextSize(2);
-  drawTempValue(weather.temperature, 215, curY - 10, 'L');
+  drawTempValue(weather.temperature, 205, curY - 10, 'L');
   d.setTextSize(1);
 
+  String desc = wmoDescription(weather.code);
   if (t->style == STYLE_COMIC) {
     // Condition text in a speech bubble pointing at the weather icon.
-    d.setFont(&fonts::FreeSansBold12pt7b);
-    String desc = wmoDescription(weather.code);
-    int bx = 212, by = curY + 40, bw = d.textWidth(desc) + 30, bh = 40;
+    int bx = 212, by = curY + 40, bh = 40;
+    fitFont(desc, descRight - bx - 30,
+            {&fonts::FreeSansBold12pt7b, &fonts::FreeSansBold9pt7b, &fonts::FreeSans9pt7b});
+    int bw = d.textWidth(desc) + 30;
     drawSpeechBubble(bx, by, bw, bh, 172, curY + 74, t);
     d.drawString(desc, bx + 18, by + bh / 2);
   } else {
-    d.setFont(&fonts::FreeSans18pt7b);
-    d.drawString(wmoDescription(weather.code), 218, curY + 52);
+    const int dx = 208;
+    fitFont(desc, descRight - dx,
+            {&fonts::FreeSans18pt7b, &fonts::FreeSans12pt7b, &fonts::FreeSans9pt7b});
+    d.drawString(desc, dx, curY + 52);
   }
 
   // Right column: feels like / humidity / wind / indoor (from the SHT40)
-  const bool imperial = config.units == "imperial";
-  const int rowGap = 38;
   d.setFont(&fonts::FreeSans12pt7b);
   d.setTextColor(t->subtext, t->bg);
-  int rx = 445, ry = curY - 60;
   d.drawString("Feels like", rx, ry);
   d.drawString("Humidity", rx, ry + rowGap);
   d.drawString("Wind", rx, ry + rowGap * 2);
   if (room.valid) d.drawString("Indoor", rx, ry + rowGap * 3);
   d.setTextColor(t->text, t->bg);
   d.setTextDatum(middle_right);
-  drawTempValue(weather.feelsLike, W - 16, ry, 'R');
-  d.drawString(String(weather.humidity) + "%", W - 16, ry + rowGap);
-  d.drawString(String((int)roundf(weather.windSpeed)) + (imperial ? " mph" : " km/h"),
-               W - 16, ry + rowGap * 2);
+  drawTempValue(weather.feelsLike, RIGHT, ry, 'R');
+  d.drawString(humStr, RIGHT, ry + rowGap);
+  d.drawString(windStr, RIGHT, ry + rowGap * 2);
   if (room.valid) {
     // "72°  45%": humidity right-aligned, temperature to its left.
-    String rh = String((int)roundf(room.humidity)) + "%";
-    d.drawString(rh, W - 16, ry + rowGap * 3);
-    float roomT = imperial ? room.tempC * 9.0f / 5.0f + 32.0f : room.tempC;
-    drawTempValue(roomT, W - 16 - d.textWidth(rh) - 12, ry + rowGap * 3, 'R');
+    d.drawString(rhStr, RIGHT, ry + rowGap * 3);
+    drawTempValue(roomT, RIGHT - d.textWidth(rhStr) - PAIR_GAP, ry + rowGap * 3, 'R');
   }
 
   // --- 5-day forecast ---

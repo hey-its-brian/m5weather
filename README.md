@@ -127,6 +127,19 @@ to you). There is no OTA endpoint, so firmware changes require USB.
 
 ## Version notes
 
+### 1.4.1 (2026-10-15)
+
+- Fix: on the Classic, Night, Forest, and Comic themes the "Indoor" label ran
+  into the indoor temperature ("Indo71°"), and "Humidity" or "Feels like"
+  could touch their values at 100% humidity or triple-digit temperatures. The
+  right-hand column now measures its rows and moves its labels left as far as
+  the widest row needs; the hero temperature and condition text shift 10 px
+  left to make room
+- The condition text (and the Comic speech bubble) steps down a font size
+  when a long description such as "Thunderstorm w/ hail" would reach the
+  indoor row
+- DECK//OS and Time Circuit layouts are unchanged
+
 ### 1.4.0 (2026-10-10)
 
 - DECK//OS theme: the Tab5 cyberdeck's HUD ported to the PaperColor as a
